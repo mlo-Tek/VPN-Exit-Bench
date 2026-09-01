@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+results.db
+.env
+.DS_Store
+vpns/
+config/
