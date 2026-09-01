@@ -5,10 +5,12 @@ RUN apk add --no-cache \
     bind-tools \
     ca-certificates \
     curl \
+    iperf3 \
     iproute2 \
     iptables \
     iputils \
     jq \
+    libnatpmp \
     nftables \
     openresolv \
     openvpn \
