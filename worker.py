@@ -17,11 +17,24 @@ PING_COUNT = int(os.environ.get("PING_COUNT", "20"))
 IPERF_DURATION = int(os.environ.get("IPERF_DURATION", "15"))
 IPERF_SINGLE_DURATION = int(os.environ.get("IPERF_SINGLE_DURATION", "8"))
 IPERF_PARALLEL = int(os.environ.get("IPERF_PARALLEL", "4"))
+PROGRESS_PREFIX = "__PROGRESS__"
 
 IPERF_TARGETS = [
     {"key": "fra", "label": "Leaseweb Frankfurt", "host": "speedtest.fra1.de.leaseweb.net"},
     {"key": "ams", "label": "Leaseweb Amsterdam", "host": "speedtest.ams1.nl.leaseweb.net"},
 ]
+
+
+def progress(stage, label, percent, details=None):
+    payload = {
+        "stage": stage,
+        "label": label,
+        "percent": max(0, min(100, int(percent))),
+        "ts": int(time.time()),
+    }
+    if details is not None:
+        payload["details"] = details
+    print(PROGRESS_PREFIX + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def run(cmd, timeout=30, check=False):
@@ -193,17 +206,8 @@ def iperf_once(host, reverse=False, parallel=4, duration=15):
 
     for port in ports:
         cmd = [
-            "iperf3",
-            "-c",
-            host,
-            "-4",
-            "-p",
-            str(port),
-            "-P",
-            str(parallel),
-            "-t",
-            str(duration),
-            "-J",
+            "iperf3", "-c", host, "-4", "-p", str(port),
+            "-P", str(parallel), "-t", str(duration), "-J",
         ]
         if reverse:
             cmd.append("-R")
@@ -265,30 +269,45 @@ def iperf_once(host, reverse=False, parallel=4, duration=15):
 
 def throughput_suite():
     targets = {}
+    phase_map = {
+        "fra": (34, 41, 49),
+        "ams": (58, 66, 74),
+    }
     for target in IPERF_TARGETS:
         host = target["host"]
-        targets[target["key"]] = {
-            "label": target["label"],
-            "host": host,
-            "single_down": iperf_once(
-                host,
-                reverse=True,
-                parallel=1,
-                duration=IPERF_SINGLE_DURATION,
-            ),
-            "multi_down": iperf_once(
-                host,
-                reverse=True,
-                parallel=IPERF_PARALLEL,
-                duration=IPERF_DURATION,
-            ),
-            "multi_up": iperf_once(
-                host,
-                reverse=False,
-                parallel=IPERF_PARALLEL,
-                duration=IPERF_DURATION,
-            ),
-        }
+        key = target["key"]
+        p_single, p_down, p_up = phase_map[key]
+        targets[key] = {"label": target["label"], "host": host}
+
+        progress(f"{key}_single_down", f"{target['label']}: Single-Stream Download läuft ({IPERF_SINGLE_DURATION} s)", p_single)
+        result = iperf_once(host, reverse=True, parallel=1, duration=IPERF_SINGLE_DURATION)
+        targets[key]["single_down"] = result
+        progress(
+            f"{key}_single_down_done",
+            f"{target['label']}: Single-Stream Download abgeschlossen",
+            p_single + 4,
+            {"metric": f"{key}_single_down", "mbps": result.get("mbps"), "ok": result.get("ok")},
+        )
+
+        progress(f"{key}_multi_down", f"{target['label']}: 4× Download läuft ({IPERF_DURATION} s)", p_down)
+        result = iperf_once(host, reverse=True, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
+        targets[key]["multi_down"] = result
+        progress(
+            f"{key}_multi_down_done",
+            f"{target['label']}: 4× Download abgeschlossen",
+            p_down + 5,
+            {"metric": f"{key}_multi_down", "mbps": result.get("mbps"), "ok": result.get("ok")},
+        )
+
+        progress(f"{key}_multi_up", f"{target['label']}: 4× Upload läuft ({IPERF_DURATION} s)", p_up)
+        result = iperf_once(host, reverse=False, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
+        targets[key]["multi_up"] = result
+        progress(
+            f"{key}_multi_up_done",
+            f"{target['label']}: 4× Upload abgeschlossen",
+            p_up + 5,
+            {"metric": f"{key}_multi_up", "mbps": result.get("mbps"), "ok": result.get("ok")},
+        )
 
     def med(path):
         vals = []
@@ -309,10 +328,7 @@ def throughput_suite():
 def dns_test():
     t = time.time()
     p = run(["nslookup", "cloudflare.com"], timeout=10)
-    return {
-        "ok": p.returncode == 0,
-        "ms": round((time.time() - t) * 1000, 1),
-    }
+    return {"ok": p.returncode == 0, "ms": round((time.time() - t) * 1000, 1)}
 
 
 def _listener(port, ready, stop):
@@ -398,10 +414,7 @@ def proton_port_forwarding():
         }
 
     public_port = int(m.group(1))
-    udp = run(
-        ["natpmpc", "-a", "1", str(public_port), "udp", "60", "-g", gateway],
-        timeout=8,
-    )
+    udp = run(["natpmpc", "-a", "1", str(public_port), "udp", "60", "-g", gateway], timeout=8)
     udp_ok = udp.returncode == 0
     external = tcp_portcheck(1, public_port=public_port)
 
@@ -469,38 +482,80 @@ def main():
     cleanup = None
 
     try:
+        progress("starting", "Worker gestartet", 1)
+        progress("ip_before", "Öffentliche IP vor dem VPN wird ermittelt", 3)
         before = public_info()
         out["ip_before"] = before
+        progress("ip_before_done", "Ausgangs-IP ermittelt", 5, {"ip": before.get("ip")})
 
         if kind == "wireguard":
+            progress("vpn_connect", "WireGuard-Tunnel wird aufgebaut", 7)
             cleanup = connect_wireguard()
+            progress("vpn_connected", "WireGuard-Tunnel steht", 11)
         elif kind == "openvpn":
+            progress("vpn_connect", "OpenVPN-Tunnel wird aufgebaut", 7)
             cleanup = connect_openvpn()
+            progress("vpn_connected", "OpenVPN-Tunnel steht", 11)
+        else:
+            progress("direct", "Direktleitung – kein VPN", 11)
 
         time.sleep(2 if kind != "none" else 0.2)
+        progress("exit_ip", "Exit-IP und Standort werden geprüft", 13)
         after = public_info()
         out["exit"] = after
+        progress(
+            "exit_ip_done",
+            "Exit-IP geprüft",
+            16,
+            {"ip": after.get("ip"), "city": after.get("city"), "country": after.get("country")},
+        )
 
         if kind == "none":
             out["ok"] = bool(after.get("ip"))
         else:
             out["ok"] = bool(after.get("ip") and after.get("ip") != before.get("ip"))
 
-        ping_results = [ping_stats("1.1.1.1"), ping_stats("8.8.8.8")]
-        out["ping"] = aggregate_ping(ping_results)
+        progress("ping_cf", f"Ping 1.1.1.1 läuft ({PING_COUNT} Pakete)", 18)
+        ping_cf = ping_stats("1.1.1.1")
+        progress("ping_cf_done", "Ping 1.1.1.1 abgeschlossen", 23, ping_cf)
+
+        progress("ping_google", f"Ping 8.8.8.8 läuft ({PING_COUNT} Pakete)", 24)
+        ping_google = ping_stats("8.8.8.8")
+        progress("ping_google_done", "Ping 8.8.8.8 abgeschlossen", 29, ping_google)
+
+        out["ping"] = aggregate_ping([ping_cf, ping_google])
+
+        progress("dns", "DNS-Auflösung wird getestet", 30)
         out["dns"] = dns_test()
+        progress("dns_done", "DNS-Test abgeschlossen", 32, out["dns"])
+
         out["throughput"] = throughput_suite()
         out["download"] = {"mbps": out["throughput"].get("download_mbps")}
         out["upload"] = {"mbps": out["throughput"].get("upload_mbps")}
+        progress(
+            "throughput_done",
+            "Durchsatztests abgeschlossen",
+            82,
+            {
+                "download_mbps": out["throughput"].get("download_mbps"),
+                "upload_mbps": out["throughput"].get("upload_mbps"),
+                "single_download_mbps": out["throughput"].get("single_download_mbps"),
+            },
+        )
 
         if kind != "none":
+            progress("port", "Port Forwarding / Erreichbarkeit wird geprüft", 86)
             out["port_forwarding"] = port_forwarding_test()
+            progress("port_done", "Port-Prüfung abgeschlossen", 94, out["port_forwarding"])
 
         if kind != "none" and not out["ok"]:
             out["warning"] = "Public IP did not change or could not be verified."
 
+        progress("finalizing", "Ergebnis wird ausgewertet und gespeichert", 97)
+
     except Exception as e:
         out["error"] = str(e)
+        progress("error", "Benchmark fehlgeschlagen", 100, {"error": str(e)})
     finally:
         if cleanup:
             try:
@@ -510,7 +565,12 @@ def main():
 
     out["finished_at"] = int(time.time())
     out["duration_s"] = out["finished_at"] - out["started_at"]
-    print(json.dumps(out, ensure_ascii=False))
+    if not out.get("error"):
+        progress("done", "Benchmark abgeschlossen", 100, {
+            "download_mbps": (out.get("throughput") or {}).get("download_mbps"),
+            "upload_mbps": (out.get("throughput") or {}).get("upload_mbps"),
+        })
+    print(json.dumps(out, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":
