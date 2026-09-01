@@ -1,6 +1,6 @@
 (()=>{
-  if (window.__vpnBenchCompareLoaded) return;
-  window.__vpnBenchCompareLoaded = true;
+  if (window.__vpnBenchCompareV2Loaded) return;
+  window.__vpnBenchCompareV2Loaded = true;
 
   const state = {
     results: [],
@@ -10,32 +10,69 @@
     toolbar: null
   };
 
-  const palette = ['#2f7df6','#36c98f','#f2b84b','#a675ff','#ff7c66','#4cc9f0','#ef6aa8','#9acb52'];
-  const escHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
+  const palette = ['#0a7cff','#28b463','#f59e0b','#8b5cf6','#06b6d4','#ef6aa8','#14b8a6','#fb7185'];
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[ch]));
-  const num = (value, digits=1) => value == null || !Number.isFinite(Number(value)) ? null : Number(value).toFixed(digits);
-  const rawNum = value => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
-  const scoreOf = r => rawNum(r?.torrent_score?.score) ?? 0;
-  const downOf = r => rawNum(r?.throughput?.download_mbps ?? r?.download?.mbps);
-  const upOf = r => rawNum(r?.throughput?.upload_mbps ?? r?.upload?.mbps);
-  const pingOf = r => rawNum(r?.ping?.avg_ms);
-  const jitterOf = r => rawNum(r?.ping?.jitter_ms);
-  const lossOf = r => rawNum(r?.ping?.loss_pct);
+  const n = (value, digits=1) => value == null || !Number.isFinite(Number(value)) ? null : Number(value).toFixed(digits);
+  const raw = value => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+
+  const scoreOf = r => raw(r?.torrent_score?.score) ?? 0;
+  const ratingOf = r => r?.torrent_score?.rating || (r?.ok ? 'Noch nicht bewertet' : 'Fehlgeschlagen');
+  const downOf = r => raw(r?.throughput?.download_mbps ?? r?.download?.mbps);
+  const upOf = r => raw(r?.throughput?.upload_mbps ?? r?.upload?.mbps);
+  const singleOf = r => raw(r?.throughput?.single_download_mbps);
+  const pingOf = r => raw(r?.ping?.avg_ms);
+  const jitterOf = r => raw(r?.ping?.jitter_ms);
+  const lossOf = r => raw(r?.ping?.loss_pct);
   const portOf = r => r?.port_forwarding || {};
+  const shortFile = name => String(name || '').replace(/\.(conf|ovpn)$/i, '');
   const dateLabel = r => r?.ts ? new Date(r.ts * 1000).toLocaleString() : '–';
-  const shortFile = name => String(name || '').replace(/\.(conf|ovpn)$/i,'');
-  const resultLabel = r => {
-    const exit = r?.exit || {};
-    const place = [exit.city, exit.country].filter(Boolean).join(' / ');
-    return `${r.provider || 'VPN'} · ${place || shortFile(r.name)}`;
-  };
-  const runLabel = r => `${resultLabel(r)} · ${dateLabel(r)}`;
+
+  function exitLabel(r) {
+    const x = r?.exit || {};
+    const place = [x.city, x.country].filter(Boolean).join(' / ');
+    return place || shortFile(r?.name) || 'Unbekannter Exit';
+  }
+
+  function resultLabel(r) {
+    return `${r?.provider || 'VPN'} · ${exitLabel(r)}`;
+  }
+
+  function providerClass(provider) {
+    const p = String(provider || '').toLowerCase();
+    if (p.includes('proton')) return 'proton';
+    if (p.includes('ovpn')) return 'ovpn';
+    return 'other';
+  }
+
+  function scoreTone(score) {
+    if (score >= 90) return 'great';
+    if (score >= 75) return 'good';
+    if (score >= 60) return 'use';
+    if (score >= 45) return 'warn';
+    return 'bad';
+  }
+
+  function portRank(r) {
+    const s = portOf(r).status;
+    return s === 'open' ? 3 : s === 'mapped_unverified' ? 2 : s === 'unknown' ? 1 : 0;
+  }
+
+  function portText(r) {
+    const p = portOf(r);
+    const number = p.public_port ? ` ${p.public_port}` : '';
+    if (p.status === 'open') return {label:`Offen ·${number}`, tone:'ok', hint:'Extern bestätigt'};
+    if (p.status === 'mapped_unverified') return {label:`Mapping ·${number}`, tone:'mapped', hint:'Mapping aktiv, extern nicht bestätigt'};
+    if (p.status === 'closed') return {label:'Geschlossen', tone:'bad', hint:'Kein erreichbarer eingehender Port'};
+    return {label:'Unbekannt', tone:'unknown', hint:'Port nicht bestätigt'};
+  }
 
   function ensureToolbar() {
     const tbody = document.querySelector('#results');
     const card = tbody?.closest('.card');
     if (!card) return null;
+    card.classList.add('results-card-scene');
 
     let toolbar = document.querySelector('#compareToolbar');
     if (!toolbar) {
@@ -43,75 +80,149 @@
       toolbar.id = 'compareToolbar';
       toolbar.className = 'compare-toolbar';
       toolbar.innerHTML = `
-        <div class="compare-toolbar-left">
-          <strong>Ergebnisse vergleichen</strong>
+        <div class="compare-toolbar-copy">
+          <div class="compare-kicker">Vergleich</div>
+          <strong>Benchmark-Runs auswählen</strong>
           <span class="muted small" id="compareSelectedCount">0 ausgewählt</span>
         </div>
         <div class="compare-toolbar-actions">
-          <button class="secondary" id="selectLatestCompare">Letzten erfolgreichen Run je Config wählen</button>
+          <button class="secondary" id="selectLatestCompare">Letzten Run je Config</button>
           <button class="secondary" id="clearCompareSelection">Auswahl aufheben</button>
           <button id="openCompare" disabled>Auswahl vergleichen</button>
         </div>`;
-      const tableWrap = [...card.children].find(el => el.tagName === 'DIV' && String(el.getAttribute('style')||'').includes('overflow'));
-      if (tableWrap) card.insertBefore(toolbar, tableWrap);
-      else card.appendChild(toolbar);
-
+      const tableWrap = card.querySelector('.result-table-wrap') ||
+        [...card.children].find(el => el.tagName === 'DIV' && String(el.getAttribute('style') || '').includes('overflow'));
+      if (tableWrap) {
+        tableWrap.classList.add('result-table-wrap');
+        card.insertBefore(toolbar, tableWrap);
+      } else {
+        card.appendChild(toolbar);
+      }
       toolbar.querySelector('#selectLatestCompare').addEventListener('click', selectLatestPerConfig);
       toolbar.querySelector('#clearCompareSelection').addEventListener('click', () => {
         state.selected.clear();
-        syncCheckboxes();
-        updateSelectionUI();
+        renderResults();
       });
       toolbar.querySelector('#openCompare').addEventListener('click', renderComparison);
     }
     state.toolbar = toolbar;
+    updateSelectionUI();
     return toolbar;
   }
 
-  function ensureHeader() {
-    const table = document.querySelector('#results')?.closest('table');
-    const headRow = table?.querySelector('thead tr');
-    if (!headRow) return;
-    if (!headRow.querySelector('.compare-select-head')) {
-      const th = document.createElement('th');
-      th.className = 'compare-select-head';
-      th.textContent = 'Vergleich';
-      headRow.insertBefore(th, headRow.firstChild);
-    }
+  function updateSelectionUI() {
+    const count = state.selected.size;
+    const countEl = document.querySelector('#compareSelectedCount');
+    const open = document.querySelector('#openCompare');
+    if (countEl) countEl.textContent = `${count} ausgewählt`;
+    if (open) open.disabled = count < 2;
   }
 
-  function decorateRows() {
-    const tbody = document.querySelector('#results');
-    if (!tbody) return;
-    ensureHeader();
-    ensureToolbar();
+  function selectLatestPerConfig() {
+    const byKey = new Map();
+    for (const r of state.results) {
+      const key = `${r.provider || ''}\u0000${r.name || ''}`;
+      if (byKey.has(key)) continue;
+      if (r.ok) byKey.set(key, Number(r.id));
+    }
+    for (const r of state.results) {
+      const key = `${r.provider || ''}\u0000${r.name || ''}`;
+      if (!byKey.has(key)) byKey.set(key, Number(r.id));
+    }
+    state.selected = new Set([...byKey.values()]);
+    renderResults();
+  }
 
-    const rows = [...tbody.querySelectorAll('tr')];
+  function makeCheckbox(r) {
+    const checked = state.selected.has(Number(r.id));
+    return `<label class="compare-check-wrap" title="Für Vergleich auswählen">
+      <input class="compare-check" type="checkbox" value="${Number(r.id)}" ${checked ? 'checked' : ''}>
+      <span></span>
+    </label>`;
+  }
+
+  function renderResults() {
+    const tbody = document.querySelector('#results');
+    const table = tbody?.closest('table');
+    if (!tbody || !table) return;
+
+    ensureToolbar();
+    table.classList.add('results-table-scene');
+    const thead = table.querySelector('thead');
+    if (thead) {
+      thead.innerHTML = `<tr>
+        <th class="select-col">Vergleich</th>
+        <th>VPN / Exit</th>
+        <th>Bewertung</th>
+        <th>Durchsatz</th>
+        <th>Netzqualität</th>
+        <th>Port</th>
+        <th>Gemessen</th>
+      </tr>`;
+    }
+
+    tbody.innerHTML = '';
     if (!state.results.length) {
-      rows.forEach(tr => {
-        const td = tr.querySelector('td[colspan]');
-        if (td) td.colSpan = 13;
-      });
+      tbody.innerHTML = `<tr><td colspan="7"><div class="results-empty">
+        <strong>Noch keine VPN-Benchmark-Ergebnisse</strong>
+        <span>Starte einen Test, danach kannst du die Runs hier auswählen und direkt vergleichen.</span>
+      </div></td></tr>`;
       updateSelectionUI();
       return;
     }
 
-    rows.forEach((tr, index) => {
-      const result = state.results[index];
-      if (!result) return;
-      tr.dataset.resultId = String(result.id);
-      let cell = tr.querySelector('.compare-select-cell');
-      if (!cell) {
-        cell = document.createElement('td');
-        cell.className = 'compare-select-cell';
-        tr.insertBefore(cell, tr.firstChild);
-      }
-      const checked = state.selected.has(Number(result.id));
-      cell.innerHTML = `<label class="compare-check-wrap" title="${escHtml(runLabel(result))}">
-        <input class="compare-check" type="checkbox" value="${Number(result.id)}" ${checked ? 'checked' : ''}>
-        <span></span>
-      </label>`;
-      cell.querySelector('input').addEventListener('change', event => {
+    for (const r of state.results) {
+      const tr = document.createElement('tr');
+      tr.dataset.resultId = String(r.id);
+      const e = r.exit || {};
+      const port = portText(r);
+      const score = scoreOf(r);
+      const rating = ratingOf(r);
+      const error = r.error || r.warning || '';
+      const place = [e.city, e.country].filter(Boolean).join(' / ') || 'Exit nicht ermittelt';
+      const ip = e.ip || '–';
+      const org = e.org || '';
+      const file = r.name || '–';
+
+      tr.innerHTML = `
+        <td class="select-col">${makeCheckbox(r)}</td>
+        <td class="endpoint-cell">
+          <div class="endpoint-head">
+            <span class="provider-chip ${providerClass(r.provider)}">${esc(r.provider || 'VPN')}</span>
+            <strong>${esc(place)}</strong>
+          </div>
+          <div class="endpoint-file" title="${esc(file)}">${esc(file)}</div>
+          <div class="endpoint-meta">${esc(ip)}${org ? ` · ${esc(org)}` : ''}</div>
+          ${error ? `<details class="result-details"><summary>Fehler / Hinweis</summary><div class="result-error">${esc(error)}</div></details>` : ''}
+        </td>
+        <td class="rating-cell">
+          <span class="rating-pill ${scoreTone(score)}">${esc(rating)}</span>
+          <div class="score-line"><b>${r.ok ? n(score,0) : '–'}</b><span>/100</span></div>
+        </td>
+        <td>
+          <div class="metric-stack">
+            <div><span>↓ Download</span><b>${downOf(r) == null ? '–' : `${n(downOf(r),1)} Mbps`}</b></div>
+            <div><span>↑ Upload</span><b>${upOf(r) == null ? '–' : `${n(upOf(r),1)} Mbps`}</b></div>
+            ${singleOf(r) == null ? '' : `<div class="minor"><span>Single</span><b>${n(singleOf(r),1)} Mbps</b></div>`}
+          </div>
+        </td>
+        <td>
+          <div class="quality-grid">
+            <div><span>Ping</span><b>${pingOf(r) == null ? '–' : `${n(pingOf(r),2)} ms`}</b></div>
+            <div><span>Jitter</span><b>${jitterOf(r) == null ? '–' : `${n(jitterOf(r),2)} ms`}</b></div>
+            <div><span>Loss</span><b>${lossOf(r) == null ? '–' : `${n(lossOf(r),2)} %`}</b></div>
+          </div>
+        </td>
+        <td class="port-cell">
+          <span class="port-pill ${port.tone}">${esc(port.label)}</span>
+          <span class="port-hint">${esc(port.hint)}</span>
+        </td>
+        <td class="date-cell">${esc(dateLabel(r))}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    tbody.querySelectorAll('.compare-check').forEach(input => {
+      input.addEventListener('change', event => {
         const id = Number(event.currentTarget.value);
         if (event.currentTarget.checked) state.selected.add(id);
         else state.selected.delete(id);
@@ -121,255 +232,221 @@
     updateSelectionUI();
   }
 
-  function syncCheckboxes() {
-    document.querySelectorAll('.compare-check').forEach(input => {
-      input.checked = state.selected.has(Number(input.value));
-    });
-  }
-
-  function updateSelectionUI() {
-    const count = state.selected.size;
-    const label = document.querySelector('#compareSelectedCount');
-    const button = document.querySelector('#openCompare');
-    if (label) label.textContent = `${count} ausgewählt`;
-    if (button) button.disabled = count < 2;
-  }
-
-  function selectLatestPerConfig() {
-    const byKey = new Map();
-    for (const r of state.results) {
-      if (!r?.ok) continue;
-      const key = `${r.provider || ''}\u0000${r.name || ''}`;
-      if (!byKey.has(key)) byKey.set(key, Number(r.id));
-    }
-    for (const r of state.results) {
-      const key = `${r.provider || ''}\u0000${r.name || ''}`;
-      if (!byKey.has(key)) byKey.set(key, Number(r.id));
-    }
-    state.selected = new Set([...byKey.values()]);
-    syncCheckboxes();
-    updateSelectionUI();
-  }
-
   async function refreshData() {
     try {
-      const [resultsResponse, baselineResponse] = await Promise.all([
-        fetch('/api/results'),
-        fetch('/api/baseline')
-      ]);
-      state.results = await resultsResponse.json();
-      const baselineData = await baselineResponse.json();
-      state.baseline = baselineData?.reference || null;
-
+      const [rr, br] = await Promise.all([fetch('/api/results'), fetch('/api/baseline')]);
+      state.results = await rr.json();
+      const bd = await br.json();
+      state.baseline = bd?.reference || null;
       const ids = new Set(state.results.map(r => Number(r.id)));
       state.selected = new Set([...state.selected].filter(id => ids.has(id)));
-      decorateRows();
+      renderResults();
     } catch (error) {
       console.warn('VPN Exit Bench comparison refresh failed', error);
     }
   }
 
-  function ensurePanel() {
-    let panel = document.querySelector('#comparisonPanel');
-    if (panel) {
-      state.panel = panel;
-      return panel;
-    }
-    const resultsCard = document.querySelector('#results')?.closest('.card');
-    if (!resultsCard) return null;
-    panel = document.createElement('div');
-    panel.id = 'comparisonPanel';
-    panel.className = 'card compare-panel';
-    panel.hidden = true;
-    resultsCard.parentNode.insertBefore(panel, resultsCard);
-    state.panel = panel;
-    return panel;
-  }
-
-  function barRows(items, valueGetter, maxValue, formatter, baselineValue=null) {
-    const safeMax = maxValue > 0 ? maxValue : 1;
-    const marker = baselineValue != null && baselineValue >= 0
-      ? Math.min(100, (baselineValue / safeMax) * 100)
-      : null;
-    return items.map((r, index) => {
-      const value = valueGetter(r);
-      const width = value == null ? 0 : Math.max(0, Math.min(100, (value / safeMax) * 100));
-      return `<div class="compare-bar-row">
-        <div class="compare-bar-label" title="${escHtml(runLabel(r))}">${escHtml(resultLabel(r))}</div>
-        <div class="compare-bar-track">
-          ${marker == null ? '' : `<span class="compare-baseline-marker" style="left:${marker}%;" title="Baseline ${escHtml(formatter(baselineValue))}"></span>`}
-          <span class="compare-bar-fill" style="width:${width}%;--series:${palette[index % palette.length]};"></span>
-        </div>
-        <div class="compare-bar-value">${value == null ? '–' : escHtml(formatter(value))}</div>
-      </div>`;
-    }).join('');
-  }
-
-  function metricChart(title, subtitle, items, getter, baselineValue, formatter) {
-    const vals = items.map(getter).filter(v => v != null && Number.isFinite(v));
-    const candidates = [...vals];
-    if (baselineValue != null && Number.isFinite(baselineValue)) candidates.push(baselineValue);
-    const max = Math.max(...candidates, 1) * 1.08;
-    return `<section class="compare-chart-card">
-      <div class="compare-chart-title"><strong>${escHtml(title)}</strong><span>${escHtml(subtitle)}</span></div>
-      <div class="compare-bars">${barRows(items, getter, max, formatter, baselineValue)}</div>
-    </section>`;
-  }
-
-  function portRank(r) {
-    const status = portOf(r).status;
-    return status === 'open' ? 3 : status === 'mapped_unverified' ? 2 : status === 'unknown' ? 1 : 0;
-  }
-
-  function portLabel(r) {
-    const p = portOf(r);
-    const port = p.public_port ? ` · ${p.public_port}` : '';
-    if (p.status === 'open') return `Offen${port}`;
-    if (p.status === 'mapped_unverified') return `Mapping aktiv${port}`;
-    if (p.status === 'closed') return `Geschlossen${port}`;
-    return `Unbekannt${port}`;
-  }
-
   function bestBy(items, getter, direction='max') {
-    const candidates = items.map(r => [r, getter(r)]).filter(([,v]) => v != null && Number.isFinite(v));
-    if (!candidates.length) return null;
-    candidates.sort((a,b) => direction === 'min' ? a[1]-b[1] : b[1]-a[1]);
-    return candidates[0][0];
+    const values = items.map(r => [r, getter(r)]).filter(([,v]) => v != null && Number.isFinite(v));
+    if (!values.length) return null;
+    values.sort((a,b) => direction === 'min' ? a[1] - b[1] : b[1] - a[1]);
+    return values[0][0];
   }
 
-  function buildRecommendation(items) {
-    const valid = items.filter(r => r?.ok);
-    if (!valid.length) {
-      return {
-        winner: null,
-        html: `<div class="compare-rec-copy"><h3>Keine erfolgreiche Messung ausgewählt</h3><p>Für eine Empfehlung müssen mindestens zwei erfolgreiche Benchmark-Runs ausgewählt sein.</p></div>`
-      };
-    }
+  function recommendation(items) {
+    const valid = items.filter(r => r.ok);
+    if (!valid.length) return {winner:null, html:`<div class="compare-rec-copy"><h3>Keine erfolgreiche Messung ausgewählt</h3><p>Wähle mindestens zwei erfolgreiche Runs.</p></div>`};
 
-    const ranked = [...valid].sort((a,b) => scoreOf(b)-scoreOf(a));
+    const ranked = [...valid].sort((a,b) => scoreOf(b) - scoreOf(a));
     const winner = ranked[0];
     const second = ranked[1] || null;
     const delta = second ? scoreOf(winner) - scoreOf(second) : null;
-    const fastestDown = bestBy(valid, downOf, 'max');
-    const fastestUp = bestBy(valid, upOf, 'max');
-    const bestPing = bestBy(valid, pingOf, 'min');
-    const bestLoss = bestBy(valid, lossOf, 'min');
-    const bestPort = [...valid].sort((a,b) => portRank(b)-portRank(a))[0] || null;
-    const badges = [];
-    if (fastestDown?.id === winner.id) badges.push('Schnellster Download');
-    if (fastestUp?.id === winner.id) badges.push('Schnellster Upload');
-    if (bestPing?.id === winner.id) badges.push('Beste Latenz');
-    if (bestLoss?.id === winner.id) badges.push('Niedrigster Packet Loss');
-    if (bestPort?.id === winner.id && portRank(winner) >= 2) badges.push('Port Forwarding');
-    if (!badges.length) badges.push('Bestes Gesamtpaket');
 
-    let headline = `${resultLabel(winner)} ist die beste qBittorrent-Wahl`;
-    let detail = `Torrent Score ${num(scoreOf(winner),0)}/100`;
+    const flags = [];
+    if (bestBy(valid, downOf)?.id === winner.id) flags.push('Schnellster Download');
+    if (bestBy(valid, upOf)?.id === winner.id) flags.push('Schnellster Upload');
+    if (bestBy(valid, pingOf, 'min')?.id === winner.id) flags.push('Beste Latenz');
+    if (bestBy(valid, lossOf, 'min')?.id === winner.id) flags.push('Niedrigster Packet Loss');
+    if ([...valid].sort((a,b) => portRank(b) - portRank(a))[0]?.id === winner.id && portRank(winner) >= 2) flags.push('Port Forwarding');
+    if (!flags.length) flags.push('Bestes Gesamtpaket');
+
+    let detail = `${n(scoreOf(winner),0)}/100 Torrent Score`;
     if (second && delta != null) {
-      if (delta < 2) detail += ` · praktisch Gleichstand mit ${resultLabel(second)}`;
-      else if (delta < 5) detail += ` · knapper Vorsprung von ${num(delta,1)} Punkten`;
-      else detail += ` · ${num(delta,1)} Punkte vor Platz 2`;
+      detail += delta < 2
+        ? ` · praktisch Gleichstand mit ${resultLabel(second)}`
+        : ` · ${n(delta,1)} Punkte vor ${resultLabel(second)}`;
     }
+
     const pf = portOf(winner);
     let warning = '';
-    if (pf.status === 'closed') warning = 'Der eingehende Port ist geschlossen; für Seeding/Peer-Erreichbarkeit ist das ein deutlicher Nachteil.';
-    else if (pf.status === 'unknown') warning = 'Der eingehende Port konnte nicht bestätigt werden. Die Empfehlung ist deshalb weniger belastbar.';
-    else if (pf.status === 'mapped_unverified') warning = 'Ein Port-Mapping wurde angelegt, die externe Erreichbarkeit aber nicht vollständig bestätigt.';
+    if (pf.status === 'closed') warning = 'Der eingehende Port ist geschlossen. Für qBittorrent und Seeding ist das ein klarer Nachteil.';
+    else if (pf.status === 'unknown') warning = 'Der eingehende Port wurde nicht bestätigt. Für eine belastbare Torrent-Empfehlung solltest du den Port prüfen.';
+    else if (pf.status === 'mapped_unverified') warning = 'Port-Mapping ist aktiv, die externe Erreichbarkeit konnte aber nicht vollständig bestätigt werden.';
 
     return {
       winner,
-      html: `<div class="compare-rec-icon">★</div>
+      html:`<div class="compare-rec-icon">★</div>
         <div class="compare-rec-copy">
           <div class="compare-kicker">Empfehlung</div>
-          <h3>${escHtml(headline)}</h3>
-          <p>${escHtml(detail)}. Die Empfehlung berücksichtigt Durchsatz, eingehenden Port, Stabilität und Latenz.</p>
-          <div class="compare-badges">${badges.map(b => `<span>${escHtml(b)}</span>`).join('')}</div>
-          ${warning ? `<div class="compare-warning">${escHtml(warning)}</div>` : ''}
+          <h3>${esc(resultLabel(winner))}</h3>
+          <p><b>${esc(detail)}</b><br>Aktuell das beste Gesamtpaket aus Durchsatz, Peer-Erreichbarkeit, Stabilität und Latenz.</p>
+          <div class="compare-badges">${flags.map(x => `<span>${esc(x)}</span>`).join('')}</div>
+          ${warning ? `<div class="compare-warning">${esc(warning)}</div>` : ''}
         </div>`
     };
   }
 
-  function qualityTable(items) {
-    return `<div class="compare-quality-wrap"><table class="compare-quality">
-      <thead><tr><th>Run</th><th>Score</th><th>Download</th><th>Upload</th><th>Ping</th><th>Jitter</th><th>Loss</th><th>Port</th></tr></thead>
-      <tbody>${items.map((r,index) => `<tr>
-        <td><span class="compare-dot" style="--series:${palette[index % palette.length]}"></span><b>${escHtml(resultLabel(r))}</b><br><span class="muted small">${escHtml(dateLabel(r))}</span></td>
-        <td><b>${r.ok ? `${num(scoreOf(r),0)}/100` : 'Fehler'}</b></td>
-        <td>${downOf(r)==null?'–':`${num(downOf(r),1)} Mbps`}</td>
-        <td>${upOf(r)==null?'–':`${num(upOf(r),1)} Mbps`}</td>
-        <td>${pingOf(r)==null?'–':`${num(pingOf(r),2)} ms`}</td>
-        <td>${jitterOf(r)==null?'–':`${num(jitterOf(r),2)} ms`}</td>
-        <td>${lossOf(r)==null?'–':`${num(lossOf(r),2)} %`}</td>
-        <td>${escHtml(portLabel(r))}</td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
+  function compareRunCards(items, winner) {
+    return `<div class="compare-run-grid">${items.map((r,index) => {
+      const p = portText(r);
+      const isWinner = winner && Number(winner.id) === Number(r.id);
+      return `<article class="compare-run-card ${isWinner ? 'winner' : ''}" style="--series:${palette[index % palette.length]}">
+        <div class="run-card-top">
+          <div>
+            <span class="provider-chip ${providerClass(r.provider)}">${esc(r.provider || 'VPN')}</span>
+            <h4>${esc(exitLabel(r))}</h4>
+          </div>
+          <div class="run-score ${scoreTone(scoreOf(r))}">${r.ok ? `${n(scoreOf(r),0)}<small>/100</small>` : 'Fehler'}</div>
+        </div>
+        <div class="run-file" title="${esc(r.name)}">${esc(r.name || '–')}</div>
+        <div class="run-card-metrics">
+          <div><span>Download</span><b>${downOf(r)==null?'–':`${n(downOf(r),1)} Mbps`}</b></div>
+          <div><span>Upload</span><b>${upOf(r)==null?'–':`${n(upOf(r),1)} Mbps`}</b></div>
+          <div><span>Ping</span><b>${pingOf(r)==null?'–':`${n(pingOf(r),1)} ms`}</b></div>
+          <div><span>Port</span><b>${esc(p.label)}</b></div>
+        </div>
+        <div class="run-date">${esc(dateLabel(r))}</div>
+      </article>`;
+    }).join('')}</div>`;
+  }
+
+  function barRows(items, getter, max, format, baseline=null) {
+    const marker = baseline != null && Number.isFinite(baseline) ? Math.min(100, (baseline / max) * 100) : null;
+    return items.map((r,index) => {
+      const value = getter(r);
+      const width = value == null ? 0 : Math.max(0, Math.min(100, (value/max)*100));
+      return `<div class="compare-bar-row">
+        <div class="compare-bar-label"><span class="compare-dot" style="--series:${palette[index % palette.length]}"></span>${esc(resultLabel(r))}</div>
+        <div class="compare-bar-track">
+          ${marker == null ? '' : `<span class="compare-baseline-marker" style="left:${marker}%"></span>`}
+          <span class="compare-bar-fill" style="width:${width}%;--series:${palette[index % palette.length]}"></span>
+        </div>
+        <div class="compare-bar-value">${value == null ? '–' : esc(format(value))}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function metricChart(title, subtitle, items, getter, baseline, format, extraClass='') {
+    const values = items.map(getter).filter(v => v != null && Number.isFinite(v));
+    const pool = [...values];
+    if (baseline != null && Number.isFinite(baseline)) pool.push(baseline);
+    const max = Math.max(...pool, 1) * 1.06;
+    return `<section class="compare-chart-card ${extraClass}">
+      <div class="compare-chart-title">
+        <div><strong>${esc(title)}</strong><span>${esc(subtitle)}</span></div>
+        ${baseline == null ? '' : `<em>Baseline ${esc(format(baseline))}</em>`}
+      </div>
+      <div class="compare-bars">${barRows(items, getter, max, format, baseline)}</div>
+    </section>`;
   }
 
   function scoreChart(items) {
     return `<section class="compare-chart-card compare-score-card">
-      <div class="compare-chart-title"><strong>Torrent Score</strong><span>Gesamtbewertung für qBittorrent · 0 bis 100</span></div>
-      <div class="compare-bars">${items.map((r,index) => {
-        const score = r.ok ? scoreOf(r) : 0;
-        return `<div class="compare-bar-row">
-          <div class="compare-bar-label" title="${escHtml(runLabel(r))}">${escHtml(resultLabel(r))}</div>
-          <div class="compare-bar-track"><span class="compare-bar-fill" style="width:${Math.max(0,Math.min(100,score))}%;--series:${palette[index % palette.length]};"></span></div>
-          <div class="compare-bar-value">${r.ok ? `${num(score,0)}/100` : 'Fehler'}</div>
-        </div>`;
+      <div class="compare-chart-title">
+        <div><strong>Torrent Score</strong><span>Gesamtbewertung für qBittorrent</span></div>
+        <em>0–100 · höher ist besser</em>
+      </div>
+      <div class="compare-bars">${barRows(items, scoreOf, 100, v => `${n(v,0)}/100`)}</div>
+    </section>`;
+  }
+
+  function qualityCards(items) {
+    return `<section class="quality-section">
+      <div class="section-title">
+        <div><strong>Netzqualität & Peer-Erreichbarkeit</strong><span>Je niedriger Ping, Jitter und Loss, desto besser. Ein erreichbarer Port ist für Torrents besonders wichtig.</span></div>
+      </div>
+      <div class="quality-card-grid">${items.map((r,index) => {
+        const p = portText(r);
+        return `<article class="quality-card" style="--series:${palette[index % palette.length]}">
+          <div class="quality-head"><span class="compare-dot" style="--series:${palette[index % palette.length]}"></span><b>${esc(resultLabel(r))}</b></div>
+          <div class="quality-metrics">
+            <div><span>Ping</span><b>${pingOf(r)==null?'–':`${n(pingOf(r),2)} ms`}</b></div>
+            <div><span>Jitter</span><b>${jitterOf(r)==null?'–':`${n(jitterOf(r),2)} ms`}</b></div>
+            <div><span>Packet Loss</span><b>${lossOf(r)==null?'–':`${n(lossOf(r),2)} %`}</b></div>
+          </div>
+          <div class="quality-port"><span class="port-pill ${p.tone}">${esc(p.label)}</span><small>${esc(p.hint)}</small></div>
+        </article>`;
       }).join('')}</div>
     </section>`;
   }
 
-  async function renderComparison() {
-    const panel = ensurePanel();
-    if (!panel) return;
-    await refreshData();
+  function ensurePanel() {
+    let panel = document.querySelector('#comparisonPanel');
+    if (!panel) {
+      const resultsCard = document.querySelector('#results')?.closest('.card');
+      if (!resultsCard) return null;
+      panel = document.createElement('div');
+      panel.id = 'comparisonPanel';
+      panel.className = 'card compare-panel';
+      panel.hidden = true;
+      resultsCard.parentNode.insertBefore(panel, resultsCard);
+    }
+    state.panel = panel;
+    return panel;
+  }
 
+  function renderComparison() {
     const selected = state.results.filter(r => state.selected.has(Number(r.id)));
     if (selected.length < 2) return;
-    const recommendation = buildRecommendation(selected);
-    const successful = selected.filter(r => r.ok);
-    const baseDown = rawNum(state.baseline?.down_mbps);
-    const baseUp = rawNum(state.baseline?.up_mbps);
-    const failedCount = selected.length - successful.length;
+
+    const panel = ensurePanel();
+    if (!panel) return;
+    const rec = recommendation(selected);
+    const baseDown = raw(state.baseline?.down_mbps);
+    const baseUp = raw(state.baseline?.up_mbps);
 
     panel.innerHTML = `
       <div class="compare-panel-head">
         <div>
           <div class="compare-kicker">Direktvergleich</div>
           <h2>${selected.length} Benchmark-Runs im Vergleich</h2>
-          <div class="muted small">Auswahl aus der Ergebnis-Historie. Baseline: ${baseDown==null?'–':`${num(baseDown,1)} Mbps Down`} / ${baseUp==null?'–':`${num(baseUp,1)} Mbps Up`}.</div>
+          <p>Ausgewählte Messungen aus deiner Ergebnis-Historie${baseDown || baseUp ? ` · Baseline ${baseDown ? n(baseDown,1)+' Mbps Down' : ''}${baseDown && baseUp ? ' / ' : ''}${baseUp ? n(baseUp,1)+' Mbps Up' : ''}` : ''}.</p>
         </div>
         <button class="secondary" id="closeCompare">Vergleich schließen</button>
       </div>
-      <div class="compare-recommendation">${recommendation.html}</div>
-      ${failedCount ? `<div class="compare-warning">${failedCount} ausgewählte${failedCount===1?'r Run wurde':' Runs wurden'} wegen eines fehlgeschlagenen Benchmarks nicht für die Empfehlung gewertet, bleibt aber in der Tabelle sichtbar.</div>` : ''}
-      <div class="compare-chart-grid">
+      <div class="compare-recommendation">${rec.html}</div>
+      ${compareRunCards(selected, rec.winner)}
+      <div class="compare-chart-layout">
         ${scoreChart(selected)}
-        ${metricChart('Download','Baseline-Markierung zeigt deine Direktleitung',successful,downOf,baseDown,v=>`${num(v,1)} Mbps`)}
-        ${metricChart('Upload','Für Seeding besonders relevant',successful,upOf,baseUp,v=>`${num(v,1)} Mbps`)}
+        <div class="compare-throughput-grid">
+          ${metricChart('Download','Mehrere parallele Streams',selected,downOf,baseDown,v=>`${n(v,1)} Mbps`)}
+          ${metricChart('Upload','Für Seeding besonders relevant',selected,upOf,baseUp,v=>`${n(v,1)} Mbps`)}
+        </div>
       </div>
-      <section class="compare-chart-card">
-        <div class="compare-chart-title"><strong>Qualität & Peer-Erreichbarkeit</strong><span>Rohwerte der ausgewählten Runs</span></div>
-        ${qualityTable(selected)}
-      </section>
-      <div class="compare-footnote">Je höher der Torrent Score, desto besser das Gesamtpaket. Beim Durchsatz ist die gemessene Direktleitung die Referenz. Für Torrents wiegt ein funktionierender eingehender Port deutlich stärker als wenige Millisekunden Ping-Unterschied.</div>`;
+      ${qualityCards(selected)}
+      <div class="compare-footnote">Die Empfehlung priorisiert nicht nur maximale Geschwindigkeit. Für qBittorrent wiegen ein funktionierender eingehender Port und stabile Verbindungen stärker als kleine Unterschiede bei wenigen Millisekunden Ping.</div>`;
 
     panel.hidden = false;
     panel.querySelector('#closeCompare').addEventListener('click', () => {
       panel.hidden = true;
+      document.querySelector('#compareToolbar')?.scrollIntoView({behavior:'smooth', block:'center'});
     });
-    panel.scrollIntoView({behavior:'smooth',block:'start'});
+    panel.scrollIntoView({behavior:'smooth', block:'start'});
   }
 
   const originalLoadResults = window.loadResults;
-  if (typeof originalLoadResults === 'function') {
-    window.loadResults = async function(...args) {
-      const value = await originalLoadResults.apply(this,args);
-      await refreshData();
-      return value;
-    };
-  }
+  window.loadResults = async function vpnBenchLoadResultsV2() {
+    if (typeof originalLoadResults === 'function' && originalLoadResults !== window.loadResults) {
+      try { await originalLoadResults(); } catch (_) {}
+    }
+    await refreshData();
+  };
 
-  ensurePanel();
+  const observer = new MutationObserver(() => {
+    if (!document.querySelector('#results')) return;
+    if (!document.querySelector('.results-table-scene')) refreshData();
+  });
+  observer.observe(document.body, {childList:true, subtree:true});
+
   refreshData();
 })();
