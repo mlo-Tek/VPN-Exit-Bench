@@ -211,14 +211,14 @@
 
   function enhanceResultSelection(){
     const toolbar=document.querySelector('#compareToolbar');
-    if(!toolbar)return;
+    if(!toolbar)return false;
     const actions=toolbar.querySelector('.compare-toolbar-actions');
-    if(!actions)return;
+    if(!actions)return false;
 
     const clear=toolbar.querySelector('#clearCompareSelection');
-    if(clear)clear.textContent='Alle abwählen';
+    if(clear&&clear.textContent!=='Alle abwählen')clear.textContent='Alle abwählen';
     const latest=toolbar.querySelector('#selectLatestCompare');
-    if(latest)latest.textContent='Letzten Run je Config';
+    if(latest&&latest.textContent!=='Letzten Run je Config')latest.textContent='Letzten Run je Config';
 
     if(!toolbar.querySelector('#selectAllCompare')){
       const button=document.createElement('button');
@@ -237,12 +237,21 @@
         });
       });
     }
+    return true;
   }
 
-  const observer=new MutationObserver(()=>enhanceResultSelection());
-  observer.observe(document.body,{childList:true,subtree:true});
+  // The comparison toolbar is injected asynchronously by result-compare.js.
+  // Poll briefly for it instead of observing the entire DOM. A previous
+  // MutationObserver changed button text inside its own callback and caused
+  // a recursive mutation loop that froze the browser tab.
+  let enhanceAttempts=0;
+  const enhanceTimer=setInterval(()=>{
+    enhanceAttempts+=1;
+    if(enhanceResultSelection()||enhanceAttempts>=50){
+      clearInterval(enhanceTimer);
+    }
+  },100);
 
   window.loadConfigs=loadConfigsManaged;
   loadConfigsManaged().catch(error=>console.warn('Config manager load failed',error));
-  enhanceResultSelection();
 })();
