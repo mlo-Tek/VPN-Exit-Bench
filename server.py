@@ -159,7 +159,9 @@ def index_with_config_upload():
         except Exception:
             return html
 
-    marker = '  <div class="card">\n    <div class="row" style="justify-content:space-between"><h2>Configs</h2>'
+    # templates/index.html is intentionally compact/minified in places.
+    # Match the actual Configs card start without depending on whitespace/newlines.
+    marker = '<div class="card"><div class="row" style="justify-content:space-between"><h2>Configs</h2>'
     if marker in html and "VPN-Configs hochladen" not in html:
         html = html.replace(marker, UPLOAD_CARD + "\n" + marker, 1)
     if "config-upload.css" not in html:
