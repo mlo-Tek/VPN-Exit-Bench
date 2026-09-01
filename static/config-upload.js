@@ -12,6 +12,12 @@
     script.dataset.vpnbenchCompare='1';
     document.body.appendChild(script);
   }
+  if(!document.querySelector('script[data-vpnbench-compare-sort]')){
+    const script=document.createElement('script');
+    script.src='/static/compare-sort.js';
+    script.dataset.vpnbenchCompareSort='1';
+    document.body.appendChild(script);
+  }
 
   const filesInput=document.querySelector('#configFiles');
   const dropzone=document.querySelector('#dropzone');
