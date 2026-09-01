@@ -27,6 +27,22 @@
     statusEl.innerHTML=message;
   }
 
+  function applyProviderPortModes(){
+    document.querySelectorAll('.config').forEach(row=>{
+      const provider=(row.querySelector('.pill')?.textContent||'').trim().toLowerCase();
+      const input=row.querySelector('input[data-port-rel]');
+      if(!input)return;
+
+      if(provider==='proton'){
+        const auto=document.createElement('div');
+        auto.className='auto-port';
+        auto.innerHTML='<strong>Auto</strong><span>NAT-PMP</span>';
+        auto.title='Proton weist beim Verbindungsaufbau dynamisch einen Port zu. VPN Exit Bench fordert ihn automatisch per NAT-PMP an und zeigt den tatsächlich zugewiesenen Port im Testergebnis.';
+        input.replaceWith(auto);
+      }
+    });
+  }
+
   async function loadProviders(){
     try{
       const configs=await(await fetch('/api/configs')).json();
@@ -55,10 +71,20 @@
       if(uploaded.length){
         selected=[];filesInput.value='';selectedEl.textContent='Noch keine Dateien ausgewählt.';
         if(typeof loadConfigs==='function')await loadConfigs();
+        applyProviderPortModes();
         await loadProviders();
       }
     }catch(error){status(h(error.message||String(error)),true)}
     finally{uploadBtn.textContent='Ausgewählte Configs hochladen';uploadBtn.disabled=!selected.length}
+  }
+
+  const originalLoadConfigs=window.loadConfigs;
+  if(typeof originalLoadConfigs==='function'){
+    window.loadConfigs=async function(...args){
+      const result=await originalLoadConfigs.apply(this,args);
+      applyProviderPortModes();
+      return result;
+    };
   }
 
   filesInput.addEventListener('change',()=>setFiles(filesInput.files));
@@ -66,5 +92,7 @@
   ['dragleave','drop'].forEach(type=>dropzone.addEventListener(type,event=>{event.preventDefault();dropzone.classList.remove('drag')}));
   dropzone.addEventListener('drop',event=>setFiles(event.dataTransfer.files));
   uploadBtn.addEventListener('click',upload);
+
+  applyProviderPortModes();
   loadProviders();
 })();
