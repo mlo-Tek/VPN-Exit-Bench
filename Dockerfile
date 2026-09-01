@@ -24,4 +24,4 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8787
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8787", "--workers", "1", "--threads", "8", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8787", "--workers", "1", "--threads", "8", "--timeout", "120", "server:app"]

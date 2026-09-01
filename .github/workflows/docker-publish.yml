@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: vpn-exit-bench-docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
