@@ -22,6 +22,7 @@ HOST_CONFIG_DIR = os.environ.get("HOST_CONFIG_DIR", "")
 REFERENCE_DOWN_MBPS = float(os.environ.get("REFERENCE_DOWN_MBPS", "500"))
 REFERENCE_UP_MBPS = float(os.environ.get("REFERENCE_UP_MBPS", "200"))
 PROGRESS_PREFIX = "__PROGRESS__"
+VALID_BENCHMARK_MODES = {"smart", "deep"}
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -29,6 +30,11 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 BENCH_LOCK = threading.Lock()
+
+
+def normalize_benchmark_mode(value):
+    mode = str(value or "smart").strip().lower()
+    return mode if mode in VALID_BENCHMARK_MODES else "smart"
 
 
 def db():
@@ -174,9 +180,17 @@ def _handle_worker_progress(job_id, item_index, total_items, config_label, event
     if stage.endswith("_done") or stage in {"vpn_connected", "direct", "done", "error"}: _append_job_event(job_id, normalized)
 
 
-def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
+def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None, mode="smart"):
     client = docker.from_env()
-    environment = {"VPN_TYPE": "none" if baseline else cfg["type"], "VPN_PROVIDER": "baseline" if baseline else cfg["provider"], "FORWARDED_PORT": str(int(forwarded_port or 0)), "PING_COUNT": "20", "IPERF_DURATION": "15", "IPERF_SINGLE_DURATION": "8", "IPERF_PARALLEL": "4"}
+    mode = normalize_benchmark_mode(mode)
+    environment = {
+        "VPN_TYPE": "none" if baseline else cfg["type"],
+        "VPN_PROVIDER": "baseline" if baseline else cfg["provider"],
+        "FORWARDED_PORT": str(int(forwarded_port or 0)),
+        "BENCHMARK_MODE": mode,
+        "IPERF_PARALLEL": "4",
+        "PEER_PARALLEL": "2",
+    }
     volumes = {}
     if not baseline:
         host_path = resolve_host_config_path(client, cfg["rel"]); volumes[host_path] = {"bind": "/vpn/config", "mode": "ro"}; environment["VPN_CONFIG"] = "/vpn/config"
@@ -194,7 +208,7 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
             devices=["/dev/net/tun:/dev/net/tun"],
             volumes=volumes,
             environment=environment,
-            labels={"vpn-exit-bench-worker": "1"},
+            labels={"vpn-exit-bench-worker": "1", "vpn-exit-bench-mode": mode},
             network_mode="bridge",
         )
         while True:
@@ -226,7 +240,7 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
             except Exception: pass
         if payload is None: payload = {"ok": False, "error": "Worker returned no JSON", "logs": "\n".join(logs[-30:])}
     except Exception as e:
-        payload = {"ok": False, "error": str(e)}
+        payload = {"ok": False, "error": str(e), "benchmark_mode": mode}
     finally:
         if container is not None:
             try: container.remove(force=True)
@@ -234,9 +248,10 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
     return payload if baseline else score_payload(payload)
 
 
-def run_job(job_id, items, baseline=False):
+def run_job(job_id, items, baseline=False, mode="smart"):
+    mode = normalize_benchmark_mode(mode)
     with BENCH_LOCK:
-        _job_update(job_id, status="running", started_at=int(time.time()), current=0, total=len(items), percent=0.0, worker_percent=0.0, phase="Benchmark wird vorbereitet", events=[], live={})
+        _job_update(job_id, status="running", started_at=int(time.time()), current=0, total=len(items), percent=0.0, worker_percent=0.0, phase=f"{mode.upper()} Benchmark wird vorbereitet", events=[], live={}, benchmark_mode=mode)
         results = []
         try:
             for index, item in enumerate(items, start=1):
@@ -244,7 +259,7 @@ def run_job(job_id, items, baseline=False):
                 label = "DIRECT baseline" if baseline else f"{cfg['provider']} / {cfg['name']}"
                 _job_update(job_id, current=index, current_label=label, worker_percent=0.0, phase="Worker wird gestartet", live={})
                 def progress_cb(event, idx=index, total=len(items), lbl=label): _handle_worker_progress(job_id, idx, total, lbl, event)
-                payload = run_worker(cfg=None if baseline else cfg, forwarded_port=port, baseline=baseline, progress_cb=progress_cb)
+                payload = run_worker(cfg=None if baseline else cfg, forwarded_port=port, baseline=baseline, progress_cb=progress_cb, mode=mode)
                 if baseline: store_result("baseline", "DIRECT", "baseline", payload)
                 else: store_result(cfg["provider"], cfg["name"], cfg["type"], payload)
                 results.append(payload)
@@ -254,11 +269,12 @@ def run_job(job_id, items, baseline=False):
             _job_update(job_id, status="error", error=str(e), phase="Benchmark fehlgeschlagen", finished_at=int(time.time()), results=results)
 
 
-def create_job(items, baseline=False):
+def create_job(items, baseline=False, mode="smart"):
+    mode = normalize_benchmark_mode(mode)
     job_id = uuid.uuid4().hex
     with JOBS_LOCK:
-        JOBS[job_id] = {"id": job_id, "status": "queued", "created_at": int(time.time()), "current": 0, "total": len(items), "current_label": "", "baseline": baseline, "percent": 0.0, "worker_percent": 0.0, "phase": "Wartet auf freien Benchmark-Slot", "events": [], "live": {}}
-    threading.Thread(target=run_job, args=(job_id, items, baseline), daemon=True).start()
+        JOBS[job_id] = {"id": job_id, "status": "queued", "created_at": int(time.time()), "current": 0, "total": len(items), "current_label": "", "baseline": baseline, "benchmark_mode": mode, "percent": 0.0, "worker_percent": 0.0, "phase": "Wartet auf freien Benchmark-Slot", "events": [], "live": {}}
+    threading.Thread(target=run_job, args=(job_id, items, baseline, mode), daemon=True).start()
     return job_id
 
 
@@ -277,7 +293,9 @@ def api_configs(): return jsonify(configs())
 def api_baseline(): return jsonify({"result": latest_baseline(), "reference": baseline_reference()})
 
 @app.post("/api/baseline")
-def start_baseline(): return jsonify({"job_id": create_job([{}], baseline=True)}), 202
+def start_baseline():
+    data = request.get_json(silent=True) or {}
+    return jsonify({"job_id": create_job([{}], baseline=True, mode=normalize_benchmark_mode(data.get("mode")))}), 202
 
 @app.get("/api/results")
 def results():
@@ -312,15 +330,22 @@ def job_status(job_id):
 
 @app.post("/api/test")
 def test():
-    data = request.get_json(silent=True) or {}; rel = data.get("rel", ""); port = int(data.get("port", 0) or 0); allowed = {x["rel"]: x for x in configs()}
+    data = request.get_json(silent=True) or {}
+    rel = data.get("rel", "")
+    port = int(data.get("port", 0) or 0)
+    mode = normalize_benchmark_mode(data.get("mode"))
+    allowed = {x["rel"]: x for x in configs()}
     if rel not in allowed: return jsonify({"error": "Unknown config"}), 404
-    return jsonify({"job_id": create_job([{"config": allowed[rel], "port": port}])}), 202
+    return jsonify({"job_id": create_job([{"config": allowed[rel], "port": port}], mode=mode)}), 202
 
 @app.post("/api/test-all")
 def test_all():
-    data = request.get_json(silent=True) or {}; ports = data.get("ports") or {}; items = [{"config": cfg, "port": int(ports.get(cfg["rel"], 0) or 0)} for cfg in configs()]
+    data = request.get_json(silent=True) or {}
+    ports = data.get("ports") or {}
+    mode = normalize_benchmark_mode(data.get("mode"))
+    items = [{"config": cfg, "port": int(ports.get(cfg["rel"], 0) or 0)} for cfg in configs()]
     if not items: return jsonify({"error": "No configs found"}), 400
-    return jsonify({"job_id": create_job(items)}), 202
+    return jsonify({"job_id": create_job(items, mode=mode)}), 202
 
 
 if __name__ == "__main__": app.run(host="0.0.0.0", port=8787, threaded=True)
