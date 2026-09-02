@@ -4,7 +4,14 @@ import re
 from flask import jsonify, request
 from werkzeug.utils import secure_filename
 
+import app as app_module
 from app import CONFIG_DIR, app, benchmark_active, configs
+from peer_scoring import score_payload as score_peer_payload
+
+# app.run_worker resolves score_payload from the app module at runtime. Replace
+# the legacy speed-only scorer with the v2 raw-speed + EU-peer scorer without
+# duplicating the worker orchestration code.
+app_module.score_payload = lambda payload: score_peer_payload(payload, app_module.baseline_reference())
 
 MAX_CONFIG_BYTES = 512 * 1024
 ALLOWED_CONFIG_SUFFIXES = {".conf", ".ovpn"}
