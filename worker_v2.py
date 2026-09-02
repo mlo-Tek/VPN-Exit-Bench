@@ -233,6 +233,10 @@ def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=No
     return {"ok": False, "host": host, "parallel": parallel, "seconds": duration, "mbps": None, "error": " | ".join(errors[-3:]) or "No reachable iPerf3 port"}
 
 
+def _metric(value, fallback):
+    return fallback if value is None else float(value)
+
+
 def raw_target_precheck():
     probes = parallel_pings([(target["host"], RAW_PRECHECK_PING_COUNT) for target in RAW_TARGETS])
     rows = []
@@ -243,7 +247,13 @@ def raw_target_precheck():
     if not reachable:
         return RAW_TARGETS[0], rows
 
-    best = min(reachable, key=lambda row: (float(row["ping"].get("loss_pct") or 100), float(row["ping"].get("avg_ms") or 9999)))
+    best = min(
+        reachable,
+        key=lambda row: (
+            _metric(row["ping"].get("loss_pct"), 100.0),
+            _metric(row["ping"].get("avg_ms"), 9999.0),
+        ),
+    )
     selected = next(target for target in RAW_TARGETS if target["key"] == best["key"])
     return selected, rows
 
@@ -442,7 +452,7 @@ def main():
     cleanup = None
     try:
         progress("starting", f"Worker gestartet · {BENCHMARK_MODE.upper()} Run", 1, {"benchmark_mode": BENCHMARK_MODE})
-        before = public_info(); out["ip_before"] = before
+        before = public_info()
         progress("ip_before_done", "Ausgangs-IP ermittelt", 4, {"ip": before.get("ip")})
         if kind == "wireguard":
             progress("vpn_connect", "WireGuard-Tunnel wird aufgebaut", 6); cleanup = connect_wireguard(); progress("vpn_connected", "WireGuard-Tunnel steht", 10)
