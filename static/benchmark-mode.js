@@ -11,6 +11,15 @@
     return value==='deep'?'Deep':'Smart';
   }
 
+  function updateHelp(){
+    const help=document.querySelector('.card.help');
+    if(!help||help.dataset.modeHelp==='1')return;
+    help.dataset.modeHelp='1';
+    help.innerHTML=`
+      <b>Torrent Score</b><span class="muted"> — 45 % EU-Peering · 25 % Raw Speed · 20 % eingehender Port · 10 % Stabilität/Latenz.</span>
+      <div class="muted" style="margin-top:5px"><b>Smart</b> ist der Standard: Frankfurt/Amsterdam werden kurz vorgeprüft und der bessere Raw-Speed-Endpunkt wird mit 4 s Single sowie 7 s Down/Up gemessen. Alle sieben EU-Peer-Regionen bleiben aktiv und werden mit kurzen 2-s-iPerf-Probes geprüft. <b>Deep</b> misst FRA und AMS vollständig mit den bisherigen längeren Zeitfenstern. Durchsatztests laufen weiterhin seriell, damit sich mehrere Messungen nicht gegenseitig Bandbreite wegnehmen.</div>`;
+  }
+
   function installControl(){
     const actions=document.querySelector('.top .actions');
     if(!actions||document.querySelector('#benchmarkMode'))return false;
@@ -33,6 +42,7 @@
       localStorage.setItem(STORAGE_KEY,mode);
       updateLabels();
     });
+    updateHelp();
     updateLabels();
     return true;
   }
@@ -74,11 +84,20 @@
     }
   };
 
+  const originalFollowJob=window.followJob;
+  if(typeof originalFollowJob==='function'){
+    window.followJob=async function(...args){
+      try{return await originalFollowJob(...args);}
+      finally{setTimeout(updateLabels,0);}
+    };
+  }
+
   window.vpnBenchBenchmarkMode=()=>mode;
 
   let attempts=0;
   const timer=setInterval(()=>{
     attempts+=1;
+    updateHelp();
     if(installControl()||attempts>=40)clearInterval(timer);
   },100);
 })();
