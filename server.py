@@ -161,7 +161,8 @@ def _auth_ok():
 
 @app.before_request
 def enforce_request_security():
-    # A fresh nonce lets the existing inline base UI run without unsafe-inline.
+    # A fresh nonce lets the existing inline base UI run without unsafe-inline
+    # script execution. Dynamic style attributes are separately constrained.
     g.csp_nonce = secrets.token_urlsafe(18)
 
     # Health checks deliberately reveal only that the process is alive.
@@ -271,7 +272,9 @@ def add_security_headers(response):
         "Content-Security-Policy",
         "default-src 'self'; "
         f"script-src 'self' 'nonce-{nonce}'; "
-        f"style-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self'; "
+        f"style-src-elem 'self' 'nonce-{nonce}'; "
+        "style-src-attr 'unsafe-inline'; "
         "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
         "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     )
@@ -369,6 +372,7 @@ def index_with_config_upload():
     nonce = getattr(g, "csp_nonce", "")
     html = html.replace("<style>", f'<style nonce="{nonce}">', 1)
     html = html.replace("<script>", f'<script nonce="{nonce}">', 1)
+    html = html.replace('onclick="loadResults()"', 'id="refreshResultsBtn"', 1)
 
     marker = '<div class="card"><div class="row" style="justify-content:space-between"><h2>Configs</h2>'
     if marker in html and "Configs hinzufügen" not in html:
