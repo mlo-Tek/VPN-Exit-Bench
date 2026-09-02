@@ -4,6 +4,13 @@ __pycache__/
 *.sqlite3
 results.db
 .env
+.env.*
 .DS_Store
 vpns/
 config/
+*.conf
+*.ovpn
+*.key
+*.pem
+*.p12
+*.pfx
