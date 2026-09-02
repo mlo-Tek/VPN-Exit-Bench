@@ -46,6 +46,9 @@ The project is under active development and does not yet promise semantic-versio
 - failed regional iPerf probes fall back to the secondary datacenter endpoint when available
 - harmless ping/precheck probes run in parallel while throughput measurements remain serial to avoid self-induced bandwidth contention
 - added selectable **Deep** mode that retains the previous long FRA + AMS raw-speed measurements and longer sample windows
+- added benchmark **Pause / Resume / Cancel** controls to the live progress panel
+- pausing lets the current config finish cleanly, then stops before the next config so iPerf measurements are not corrupted
+- cancelling stops the current worker immediately, discards the partial current-config result and keeps already completed results
 
 ## 2026-09-01
 
