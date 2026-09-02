@@ -34,4 +34,8 @@
     }
     return originalFetch(input,{...init,headers});
   };
+
+  document.querySelector('#refreshResultsBtn')?.addEventListener('click',()=>{
+    if(typeof window.loadResults==='function')window.loadResults();
+  });
 })();
