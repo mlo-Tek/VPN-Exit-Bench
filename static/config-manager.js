@@ -9,6 +9,105 @@
   const isProton=c=>String(c?.provider||'').toLowerCase()==='proton';
   const typeLabel=type=>String(type||'').toLowerCase()==='openvpn'?'OpenVPN':'WireGuard';
 
+  let configScrollRaf=0;
+  let resultScrollRaf=0;
+
+  function visibleHeight(elements,gap=0){
+    return elements.reduce((sum,el)=>sum+el.getBoundingClientRect().height,0)+Math.max(0,elements.length-1)*gap;
+  }
+
+  function applyConfigScrollLimit(){
+    const list=document.querySelector('#configs');
+    if(!list)return;
+    const rows=[...list.querySelectorAll(':scope > .config-item')];
+    if(rows.length<=5){
+      list.style.maxHeight='';
+      list.style.overflowY='';
+      list.style.overflowX='';
+      list.style.scrollbarGutter='';
+      list.style.overscrollBehavior='';
+      list.style.paddingRight='';
+      list.removeAttribute('data-scroll-limited');
+      return;
+    }
+
+    const style=getComputedStyle(list);
+    const gap=parseFloat(style.rowGap||style.gap||'0')||0;
+    const height=Math.ceil(visibleHeight(rows.slice(0,5),gap));
+    list.style.maxHeight=`${height}px`;
+    list.style.overflowY='auto';
+    list.style.overflowX='hidden';
+    list.style.scrollbarGutter='stable';
+    list.style.overscrollBehavior='contain';
+    list.style.paddingRight='6px';
+    list.dataset.scrollLimited='1';
+  }
+
+  function applyResultScrollLimit(){
+    const tbody=document.querySelector('#results');
+    const table=tbody?.closest('table');
+    const wrap=table?.closest('.result-table-wrap')||table?.parentElement;
+    if(!tbody||!table||!wrap)return;
+
+    const rows=[...tbody.querySelectorAll(':scope > tr')].filter(row=>!row.querySelector('.results-empty'));
+    if(rows.length<=5){
+      wrap.style.maxHeight='';
+      wrap.style.overflowY='';
+      wrap.style.scrollbarGutter='';
+      wrap.style.overscrollBehavior='';
+      wrap.removeAttribute('data-scroll-limited');
+      return;
+    }
+
+    const headHeight=table.tHead?.getBoundingClientRect().height||0;
+    const height=Math.ceil(headHeight+visibleHeight(rows.slice(0,5),0));
+    wrap.style.maxHeight=`${height}px`;
+    wrap.style.overflowY='auto';
+    wrap.style.overflowX='auto';
+    wrap.style.scrollbarGutter='stable';
+    wrap.style.overscrollBehavior='contain';
+    wrap.dataset.scrollLimited='1';
+
+    table.querySelectorAll('thead th').forEach(th=>{
+      th.style.position='sticky';
+      th.style.top='0';
+      th.style.zIndex='4';
+    });
+  }
+
+  function scheduleConfigScrollLimit(){
+    if(configScrollRaf)return;
+    configScrollRaf=requestAnimationFrame(()=>{
+      configScrollRaf=0;
+      applyConfigScrollLimit();
+    });
+  }
+
+  function scheduleResultScrollLimit(){
+    if(resultScrollRaf)return;
+    resultScrollRaf=requestAnimationFrame(()=>{
+      resultScrollRaf=0;
+      applyResultScrollLimit();
+    });
+  }
+
+  function installScrollLimits(){
+    const configsEl=document.querySelector('#configs');
+    const resultsEl=document.querySelector('#results');
+    if(configsEl){
+      new MutationObserver(scheduleConfigScrollLimit).observe(configsEl,{childList:true});
+      scheduleConfigScrollLimit();
+    }
+    if(resultsEl){
+      new MutationObserver(scheduleResultScrollLimit).observe(resultsEl,{childList:true});
+      scheduleResultScrollLimit();
+    }
+    window.addEventListener('resize',()=>{
+      scheduleConfigScrollLimit();
+      scheduleResultScrollLimit();
+    },{passive:true});
+  }
+
   function getConfigShell(){
     const list=document.querySelector('#configs');
     const card=list?.closest('.card');
@@ -174,6 +273,7 @@
 
     configs.forEach(c=>shell.list.appendChild(renderConfig(c)));
     updateConfigSelectionUi();
+    scheduleConfigScrollLimit();
   }
 
   async function deleteSelectedConfigs(){
@@ -252,6 +352,7 @@
     }
   },100);
 
+  installScrollLimits();
   window.loadConfigs=loadConfigsManaged;
   loadConfigsManaged().catch(error=>console.warn('Config manager load failed',error));
 })();
