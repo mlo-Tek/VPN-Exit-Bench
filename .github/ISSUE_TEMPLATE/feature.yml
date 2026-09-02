@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an improvement to VPN Exit Bench
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security / privacy considerations
+      description: Does this affect Docker access, VPN configs, stored data, authentication, external services or new dependencies?
+  - type: checkboxes
+    id: unraid
+    attributes:
+      label: Unraid-native requirement
+      options:
+        - label: This proposal does not require Docker Compose as the supported installation method.
+          required: true

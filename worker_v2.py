@@ -7,19 +7,53 @@ import statistics
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CFG = Path(os.environ.get("VPN_CONFIG", "/vpn/config"))
 TYPE = os.environ.get("VPN_TYPE", "auto").lower()
 PROVIDER = os.environ.get("VPN_PROVIDER", "").strip().lower()
 FORWARDED_PORT = int(os.environ.get("FORWARDED_PORT", "0") or 0)
-PING_COUNT = int(os.environ.get("PING_COUNT", "20"))
-IPERF_DURATION = int(os.environ.get("IPERF_DURATION", "15"))
-IPERF_SINGLE_DURATION = int(os.environ.get("IPERF_SINGLE_DURATION", "8"))
+BENCHMARK_MODE = os.environ.get("BENCHMARK_MODE", "smart").strip().lower()
+if BENCHMARK_MODE not in {"smart", "deep"}:
+    BENCHMARK_MODE = "smart"
+
+PROFILE = {
+    "smart": {
+        "ping_count": 8,
+        "iperf_duration": 7,
+        "iperf_single_duration": 4,
+        "peer_ping_count": 4,
+        "peer_duration": 2,
+        "iperf_max_tries": 2,
+        "peer_max_tries": 2,
+        "connect_timeout_ms": 2500,
+        "raw_precheck_ping_count": 3,
+    },
+    "deep": {
+        "ping_count": 20,
+        "iperf_duration": 15,
+        "iperf_single_duration": 8,
+        "peer_ping_count": 6,
+        "peer_duration": 3,
+        "iperf_max_tries": 5,
+        "peer_max_tries": 4,
+        "connect_timeout_ms": 5000,
+        "raw_precheck_ping_count": 5,
+    },
+}[BENCHMARK_MODE]
+
+PING_COUNT = int(os.environ.get("PING_COUNT", str(PROFILE["ping_count"])))
+IPERF_DURATION = int(os.environ.get("IPERF_DURATION", str(PROFILE["iperf_duration"])))
+IPERF_SINGLE_DURATION = int(os.environ.get("IPERF_SINGLE_DURATION", str(PROFILE["iperf_single_duration"])))
 IPERF_PARALLEL = int(os.environ.get("IPERF_PARALLEL", "4"))
-PEER_PING_COUNT = int(os.environ.get("PEER_PING_COUNT", "6"))
-PEER_DURATION = int(os.environ.get("PEER_DURATION", "3"))
+PEER_PING_COUNT = int(os.environ.get("PEER_PING_COUNT", str(PROFILE["peer_ping_count"])))
+PEER_DURATION = int(os.environ.get("PEER_DURATION", str(PROFILE["peer_duration"])))
 PEER_PARALLEL = int(os.environ.get("PEER_PARALLEL", "2"))
+IPERF_MAX_TRIES = int(os.environ.get("IPERF_MAX_TRIES", str(PROFILE["iperf_max_tries"])))
+PEER_MAX_TRIES = int(os.environ.get("PEER_MAX_TRIES", str(PROFILE["peer_max_tries"])))
+IPERF_CONNECT_TIMEOUT_MS = int(os.environ.get("IPERF_CONNECT_TIMEOUT_MS", str(PROFILE["connect_timeout_ms"])))
+RAW_PRECHECK_PING_COUNT = int(os.environ.get("RAW_PRECHECK_PING_COUNT", str(PROFILE["raw_precheck_ping_count"])))
 PROGRESS_PREFIX = "__PROGRESS__"
 
 RAW_TARGETS = [
@@ -142,6 +176,14 @@ def ping_stats(host, count=None):
     return {"host": host, "sent": count, "received": received, "avg_ms": round(statistics.mean(vals), 2), "min_ms": round(min(vals), 2), "max_ms": round(max(vals), 2), "jitter_ms": round(statistics.mean(diffs), 2) if diffs else 0.0, "loss_pct": round(loss, 2)}
 
 
+def parallel_pings(items):
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=len(items)) as pool:
+        futures = [pool.submit(ping_stats, host, count) for host, count in items]
+        return [future.result() for future in futures]
+
+
 def aggregate_ping(results):
     valid = [x for x in results if x.get("avg_ms") is not None]
     if not valid:
@@ -149,17 +191,22 @@ def aggregate_ping(results):
     return {"avg_ms": round(statistics.mean(x["avg_ms"] for x in valid), 2), "jitter_ms": round(statistics.mean(x["jitter_ms"] for x in valid), 2), "loss_pct": round(statistics.mean(x["loss_pct"] for x in results), 2), "targets": results}
 
 
-def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=5):
+def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=None):
+    tries = int(max_tries or IPERF_MAX_TRIES)
     candidates = list(ports or [5201])
     random.shuffle(candidates)
-    candidates = candidates[:max_tries]
+    candidates = candidates[:tries]
     errors = []
     for port in candidates:
-        cmd = ["iperf3", "-c", host, "-4", "-p", str(port), "-P", str(parallel), "-t", str(duration), "-J"]
+        cmd = [
+            "iperf3", "-c", host, "-4", "-p", str(port),
+            "--connect-timeout", str(IPERF_CONNECT_TIMEOUT_MS),
+            "-P", str(parallel), "-t", str(duration), "-J",
+        ]
         if reverse:
             cmd.append("-R")
         try:
-            p = run(cmd, timeout=duration + 10)
+            p = run(cmd, timeout=duration + (6 if BENCHMARK_MODE == "smart" else 10))
         except subprocess.TimeoutExpired:
             errors.append(f"{port}: timeout")
             continue
@@ -186,41 +233,127 @@ def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=5)
     return {"ok": False, "host": host, "parallel": parallel, "seconds": duration, "mbps": None, "error": " | ".join(errors[-3:]) or "No reachable iPerf3 port"}
 
 
+def _metric(value, fallback):
+    return fallback if value is None else float(value)
+
+
+def raw_target_precheck():
+    probes = parallel_pings([(target["host"], RAW_PRECHECK_PING_COUNT) for target in RAW_TARGETS])
+    rows = []
+    for target, probe in zip(RAW_TARGETS, probes):
+        rows.append({"key": target["key"], "label": target["label"], "host": target["host"], "ping": probe})
+
+    reachable = [row for row in rows if row["ping"].get("avg_ms") is not None]
+    if not reachable:
+        return RAW_TARGETS[0], rows
+
+    best = min(
+        reachable,
+        key=lambda row: (
+            _metric(row["ping"].get("loss_pct"), 100.0),
+            _metric(row["ping"].get("avg_ms"), 9999.0),
+        ),
+    )
+    selected = next(target for target in RAW_TARGETS if target["key"] == best["key"])
+    return selected, rows
+
+
 def raw_throughput_suite(progress_start=31, progress_end=66):
     targets = {}
-    span = (progress_end - progress_start) / max(len(RAW_TARGETS), 1)
-    for idx, target in enumerate(RAW_TARGETS):
+    precheck = []
+    if BENCHMARK_MODE == "smart":
+        progress("raw_precheck", "Raw Speed · Frankfurt/Amsterdam werden kurz vorgeprüft", progress_start)
+        selected, precheck = raw_target_precheck()
+        run_targets = [selected]
+        selected_key = selected["key"]
+    else:
+        run_targets = RAW_TARGETS
+        selected_key = None
+
+    span = (progress_end - progress_start) / max(len(run_targets), 1)
+    for idx, target in enumerate(run_targets):
         base = progress_start + idx * span
         key, host, ports = target["key"], target["host"], target["ports"]
         targets[key] = {"label": target["label"], "host": host}
-        progress(f"raw_{key}_single", f"Raw Speed · {target['label']}: Single Download", base)
+        progress(f"raw_{key}_single", f"Raw Speed · {target['label']}: Single Download", base + 1)
         targets[key]["single_down"] = iperf_once(host, ports, reverse=True, parallel=1, duration=IPERF_SINGLE_DURATION)
-        progress(f"raw_{key}_down", f"Raw Speed · {target['label']}: 4× Download", base + span * 0.28)
+        progress(f"raw_{key}_down", f"Raw Speed · {target['label']}: 4× Download", base + span * 0.34)
         targets[key]["multi_down"] = iperf_once(host, ports, reverse=True, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
-        progress(f"raw_{key}_up", f"Raw Speed · {target['label']}: 4× Upload", base + span * 0.68)
+        progress(f"raw_{key}_up", f"Raw Speed · {target['label']}: 4× Upload", base + span * 0.7)
         targets[key]["multi_up"] = iperf_once(host, ports, reverse=False, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
 
     def med(path):
         vals = [float(item[path]["mbps"]) for item in targets.values() if item.get(path, {}).get("mbps") is not None]
         return round(statistics.median(vals), 2) if vals else None
-    return {"download_mbps": med("multi_down"), "upload_mbps": med("multi_up"), "single_download_mbps": med("single_down"), "targets": targets}
+
+    return {
+        "download_mbps": med("multi_down"),
+        "upload_mbps": med("multi_up"),
+        "single_download_mbps": med("single_down"),
+        "targets": targets,
+        "benchmark_mode": BENCHMARK_MODE,
+        "selected_target": selected_key,
+        "precheck": precheck,
+    }
+
+
+def iperf_region_direction(region, reverse=False):
+    endpoints = [region["primary"]]
+    if region.get("secondary"):
+        endpoints.append(region["secondary"])
+
+    attempts = []
+    for endpoint in endpoints:
+        result = iperf_once(
+            endpoint["host"],
+            endpoint["ports"],
+            reverse=reverse,
+            parallel=PEER_PARALLEL,
+            duration=PEER_DURATION,
+            max_tries=PEER_MAX_TRIES,
+        )
+        result["target_label"] = endpoint["label"]
+        attempts.append(dict(result))
+        if result.get("ok"):
+            result["attempts"] = attempts
+            return result
+
+    failed = dict(attempts[-1]) if attempts else {"ok": False, "mbps": None, "error": "No peer endpoint configured"}
+    failed["attempts"] = attempts
+    return failed
 
 
 def peer_region_probe(region):
     primary = region["primary"]
     secondary = region.get("secondary")
-    networks = []
-    primary_ping = ping_stats(primary["host"], PEER_PING_COUNT)
-    networks.append({"label": primary["label"], "host": primary["host"], "role": "primary", "ping": primary_ping})
-    secondary_ping = None
+    ping_inputs = [(primary["host"], PEER_PING_COUNT)]
     if secondary:
-        secondary_ping = ping_stats(secondary["host"], max(4, PEER_PING_COUNT - 1))
-        networks.append({"label": secondary["label"], "host": secondary["host"], "role": "secondary", "ping": secondary_ping})
-    down = iperf_once(primary["host"], primary["ports"], reverse=True, parallel=PEER_PARALLEL, duration=PEER_DURATION, max_tries=4)
-    up = iperf_once(primary["host"], primary["ports"], reverse=False, parallel=PEER_PARALLEL, duration=PEER_DURATION, max_tries=4)
-    pings = [x for x in [primary_ping, secondary_ping] if x]
-    aggregate = aggregate_ping(pings)
-    return {"code": region["code"], "label": region["label"], "city": region["city"], "primary": primary["label"], "download_mbps": down.get("mbps"), "upload_mbps": up.get("mbps"), "download": down, "upload": up, "ping_ms": aggregate.get("avg_ms"), "jitter_ms": aggregate.get("jitter_ms"), "loss_pct": aggregate.get("loss_pct"), "networks": networks}
+        ping_inputs.append((secondary["host"], max(3, PEER_PING_COUNT - 1)))
+    ping_results = parallel_pings(ping_inputs)
+
+    networks = [{"label": primary["label"], "host": primary["host"], "role": "primary", "ping": ping_results[0]}]
+    if secondary:
+        networks.append({"label": secondary["label"], "host": secondary["host"], "role": "secondary", "ping": ping_results[1]})
+
+    down = iperf_region_direction(region, reverse=True)
+    up = iperf_region_direction(region, reverse=False)
+    aggregate = aggregate_ping(ping_results)
+    return {
+        "code": region["code"],
+        "label": region["label"],
+        "city": region["city"],
+        "primary": primary["label"],
+        "download_mbps": down.get("mbps"),
+        "upload_mbps": up.get("mbps"),
+        "download": down,
+        "upload": up,
+        "download_target": down.get("target_label"),
+        "upload_target": up.get("target_label"),
+        "ping_ms": aggregate.get("avg_ms"),
+        "jitter_ms": aggregate.get("jitter_ms"),
+        "loss_pct": aggregate.get("loss_pct"),
+        "networks": networks,
+    }
 
 
 def peer_connectivity_suite(progress_start=67, progress_end=91):
@@ -232,7 +365,7 @@ def peer_connectivity_suite(progress_start=67, progress_end=91):
         result = peer_region_probe(region)
         regions[region["code"]] = result
         progress(f"peer_{region['code'].lower()}_done", f"EU Peer · {region['code']} abgeschlossen", pct + span * 0.9, {"region": region["code"], "download_mbps": result.get("download_mbps"), "upload_mbps": result.get("upload_mbps"), "ping_ms": result.get("ping_ms"), "loss_pct": result.get("loss_pct")})
-    return {"regions": regions, "target_order": [r["code"] for r in PEER_REGIONS], "method": "short multi-network iPerf3 + ICMP probes"}
+    return {"regions": regions, "target_order": [r["code"] for r in PEER_REGIONS], "method": "short multi-network iPerf3 + ICMP probes", "benchmark_mode": BENCHMARK_MODE}
 
 
 def dns_test():
@@ -307,11 +440,19 @@ def port_forwarding_test():
 
 def main():
     kind = vpn_type()
-    out = {"ok": False, "config": CFG.name if kind != "none" else "DIRECT", "type": kind, "provider_hint": PROVIDER, "started_at": int(time.time()), "benchmark_version": 2}
+    out = {
+        "ok": False,
+        "config": CFG.name if kind != "none" else "DIRECT",
+        "type": kind,
+        "provider_hint": PROVIDER,
+        "started_at": int(time.time()),
+        "benchmark_version": 3,
+        "benchmark_mode": BENCHMARK_MODE,
+    }
     cleanup = None
     try:
-        progress("starting", "Worker gestartet", 1)
-        before = public_info(); out["ip_before"] = before
+        progress("starting", f"Worker gestartet · {BENCHMARK_MODE.upper()} Run", 1, {"benchmark_mode": BENCHMARK_MODE})
+        before = public_info()
         progress("ip_before_done", "Ausgangs-IP ermittelt", 4, {"ip": before.get("ip")})
         if kind == "wireguard":
             progress("vpn_connect", "WireGuard-Tunnel wird aufgebaut", 6); cleanup = connect_wireguard(); progress("vpn_connected", "WireGuard-Tunnel steht", 10)
@@ -324,19 +465,19 @@ def main():
         out["ok"] = bool(after.get("ip")) if kind == "none" else bool(after.get("ip") and after.get("ip") != before.get("ip"))
         progress("exit_ip_done", "Exit-IP geprüft", 14, {"ip": after.get("ip"), "city": after.get("city"), "country": after.get("country")})
 
-        progress("ping_cf", f"Ping 1.1.1.1 ({PING_COUNT} Pakete)", 16); ping_cf = ping_stats("1.1.1.1")
-        progress("ping_google", f"Ping 8.8.8.8 ({PING_COUNT} Pakete)", 20); ping_google = ping_stats("8.8.8.8")
+        progress("ping_pair", f"Ping 1.1.1.1 + 8.8.8.8 ({PING_COUNT} Pakete, parallel)", 17)
+        ping_cf, ping_google = parallel_pings([("1.1.1.1", PING_COUNT), ("8.8.8.8", PING_COUNT)])
         out["ping"] = aggregate_ping([ping_cf, ping_google])
-        progress("dns", "DNS-Auflösung wird getestet", 24); out["dns"] = dns_test()
+        progress("dns", "DNS-Auflösung wird getestet", 23); out["dns"] = dns_test()
 
-        out["throughput"] = raw_throughput_suite(27, 64)
+        out["throughput"] = raw_throughput_suite(27, 59 if kind != "none" else 94)
         out["download"] = {"mbps": out["throughput"].get("download_mbps")}
         out["upload"] = {"mbps": out["throughput"].get("upload_mbps")}
-        progress("raw_done", "Raw-Speed-Tests abgeschlossen", 65, {"download_mbps": out["throughput"].get("download_mbps"), "upload_mbps": out["throughput"].get("upload_mbps")})
+        progress("raw_done", "Raw-Speed-Tests abgeschlossen", 60 if kind != "none" else 95, {"download_mbps": out["throughput"].get("download_mbps"), "upload_mbps": out["throughput"].get("upload_mbps"), "benchmark_mode": BENCHMARK_MODE})
 
         if kind != "none":
-            out["peer_connectivity"] = peer_connectivity_suite(66, 91)
-            progress("port", "Port Forwarding / Erreichbarkeit wird geprüft", 93)
+            out["peer_connectivity"] = peer_connectivity_suite(61, 89)
+            progress("port", "Port Forwarding / Erreichbarkeit wird geprüft", 91)
             out["port_forwarding"] = port_forwarding_test()
             progress("port_done", "Port-Prüfung abgeschlossen", 97, out["port_forwarding"])
         if kind != "none" and not out["ok"]:
@@ -350,7 +491,7 @@ def main():
             except Exception: pass
     out["finished_at"] = int(time.time()); out["duration_s"] = out["finished_at"] - out["started_at"]
     if not out.get("error"):
-        progress("done", "Benchmark abgeschlossen", 100, {"download_mbps": (out.get("throughput") or {}).get("download_mbps"), "upload_mbps": (out.get("throughput") or {}).get("upload_mbps")})
+        progress("done", "Benchmark abgeschlossen", 100, {"download_mbps": (out.get("throughput") or {}).get("download_mbps"), "upload_mbps": (out.get("throughput") or {}).get("upload_mbps"), "benchmark_mode": BENCHMARK_MODE})
     print(json.dumps(out, ensure_ascii=False), flush=True)
 
 

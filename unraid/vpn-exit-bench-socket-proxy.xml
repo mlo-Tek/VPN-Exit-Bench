@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container version="2">
+    <Name>vpn-exit-bench-socket-proxy</Name>
+    <Repository>tecnativa/docker-socket-proxy:v0.5.0</Repository>
+    <Registry>https://hub.docker.com/r/tecnativa/docker-socket-proxy</Registry>
+    <Network>vpn-exit-bench</Network>
+    <Privileged>true</Privileged>
+    <Project>https://github.com/Tecnativa/docker-socket-proxy</Project>
+    <Support>https://github.com/mlo-Tek/VPN-Exit-Bench/issues</Support>
+    <Overview>Restricted Docker API proxy for VPN Exit Bench. Intended only for the private user-defined Docker network named vpn-exit-bench. Port 2375 is intentionally NOT published to the Unraid host/LAN.</Overview>
+    <Beta>True</Beta>
+    <Category>Network: Tools:</Category>
+    <TemplateURL>https://raw.githubusercontent.com/mlo-Tek/VPN-Exit-Bench/main/unraid/vpn-exit-bench-socket-proxy.xml</TemplateURL>
+
+    <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Host Docker socket used only by this restricted proxy" Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+
+    <Config Name="CONTAINERS" Target="CONTAINERS" Default="1" Description="Allow the container API section required to create/inspect/remove benchmark workers" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+    <Config Name="POST" Target="POST" Default="1" Description="Allow mutating Docker API calls required to create and clean up benchmark workers" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+    <Config Name="ALLOW_START" Target="ALLOW_START" Default="1" Description="Allow starting benchmark workers" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+    <Config Name="ALLOW_STOP" Target="ALLOW_STOP" Default="1" Description="Allow stopping benchmark workers" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+    <Config Name="ALLOW_RESTARTS" Target="ALLOW_RESTARTS" Default="1" Description="Allows kill/stop paths needed for timed-out workers" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+    <Config Name="EVENTS" Target="EVENTS" Default="0" Description="VPN Exit Bench does not need Docker event streaming" Type="Variable" Display="advanced" Required="true" Mask="false">0</Config>
+    <Config Name="LOG_LEVEL" Target="LOG_LEVEL" Default="warning" Description="Proxy log level" Type="Variable" Display="advanced" Required="true" Mask="false">warning</Config>
+</Container>

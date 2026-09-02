@@ -1,4 +1,17 @@
 (()=>{
+  if(!document.querySelector('link[data-vpnbench-benchmark-mode]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/static/benchmark-mode.css';
+    link.dataset.vpnbenchBenchmarkMode='1';
+    document.head.appendChild(link);
+  }
+  if(!document.querySelector('script[data-vpnbench-benchmark-mode]')){
+    const script=document.createElement('script');
+    script.src='/static/benchmark-mode.js';
+    script.dataset.vpnbenchBenchmarkMode='1';
+    document.body.appendChild(script);
+  }
   if(!document.querySelector('link[data-vpnbench-compare]')){
     const link=document.createElement('link');
     link.rel='stylesheet';

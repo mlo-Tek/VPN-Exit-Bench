@@ -21,3 +21,10 @@ config/
 *.pfx
 *.crt
 *.cer
+tests/
+requirements-dev.txt
+CONTRIBUTING.md
+SECURITY.md
+PRIVACY.md
+CHANGELOG.md
+CODE_OF_CONDUCT.md
