@@ -1,3 +1,14 @@
+REGION_WEIGHTS = {
+    "NL": 25,
+    "DE": 25,
+    "CH": 20,
+    "DK": 10,
+    "SE": 10,
+    "PL": 5,
+    "RO": 5,
+}
+
+
 def _num(value):
     try:
         return float(value)
@@ -73,6 +84,16 @@ def _rating(score, port_status):
     return "Eher ungeeignet"
 
 
+def _peer_rating(score):
+    if score is None: return "Nicht bewertet"
+    if score >= 92: return "Exzellentes EU-Peering"
+    if score >= 85: return "Sehr gutes EU-Peering"
+    if score >= 75: return "Gutes EU-Peering"
+    if score >= 65: return "Solides EU-Peering"
+    if score >= 50: return "Durchwachsenes EU-Peering"
+    return "Schwaches EU-Peering"
+
+
 def _region_score(region, reference):
     down = _ratio_score(region.get("download_mbps"), reference.get("down_mbps"))
     up = _ratio_score(region.get("upload_mbps"), reference.get("up_mbps"))
@@ -112,27 +133,38 @@ def score_payload(payload, reference):
     raw_speed_score = _weighted([(raw_down, 60), (raw_up, 40)])
 
     scored_regions = {}
+    weighted_region_sum = 0.0
+    weighted_region_total = 0.0
     region_scores = []
     for code, region in (peer.get("regions") or {}).items():
         scored = _region_score(region, reference)
         scored_regions[code] = scored
-        if scored.get("score") is not None:
-            region_scores.append(float(scored["score"]))
+        score = _num(scored.get("score"))
+        if score is None:
+            continue
+        weight = float(REGION_WEIGHTS.get(code, 5))
+        weighted_region_sum += score * weight
+        weighted_region_total += weight
+        region_scores.append(score)
 
     peer_score = None
     peer_average = None
     peer_worst = None
-    if region_scores:
-        peer_average = round(sum(region_scores) / len(region_scores), 1)
+    if region_scores and weighted_region_total:
+        peer_average = round(weighted_region_sum / weighted_region_total, 1)
         peer_worst = round(min(region_scores), 1)
-        # Reward broad EU consistency and penalize one very poor route.
+        # The weighted average reflects the likely seedbox/peer pool. A weak
+        # single route still matters because torrent swarms are multi-homed.
         peer_score = round(peer_average * 0.85 + peer_worst * 0.15, 1)
 
     peer["regions"] = scored_regions
     peer["score"] = peer_score
+    peer["rating"] = _peer_rating(peer_score)
     peer["average_score"] = peer_average
     peer["worst_region_score"] = peer_worst
-    peer["weights"] = {"average": 85, "worst_region": 15}
+    peer["region_weights"] = REGION_WEIGHTS
+    peer["weights"] = {"weighted_average": 85, "worst_region": 15}
+    peer["core_regions"] = ["NL", "DE", "CH", "DK", "SE"]
     payload["peer_connectivity"] = peer
 
     stability_score = _weighted([
@@ -148,6 +180,13 @@ def score_payload(payload, reference):
         (stability_score, 10),
     ])
 
+    payload["speed_score"] = {
+        "score": raw_speed_score,
+        "download": raw_down,
+        "upload": raw_up,
+        "reference": reference,
+        "weights": {"download": 60, "upload": 40},
+    }
     payload["torrent_score"] = {
         "score": total,
         "rating": _rating(total, port_status),
@@ -162,6 +201,6 @@ def score_payload(payload, reference):
         },
         "reference": reference,
         "weights": {"raw_speed": 25, "eu_peer": 45, "port": 20, "stability": 10},
-        "model": "torrent-eu-peer-v2",
+        "model": "torrent-eu-peer-v3",
     }
     return payload
