@@ -1,13 +1,17 @@
 from pathlib import Path
+import hmac
 import json
+import os
 import re
+import secrets
 import sqlite3
 
-from flask import jsonify, request
+from flask import Response, g, jsonify, request
 from werkzeug.utils import secure_filename
 
 import app as app_module
 from app import CONFIG_DIR, app, benchmark_active, configs
+from config_security import ALLOWED_CONFIG_SUFFIXES, MAX_CONFIG_BYTES, validate_config_bytes
 from peer_scoring import score_payload as score_peer_payload
 
 # app.run_worker resolves score_payload from the app module at runtime. Replace
@@ -15,33 +19,17 @@ from peer_scoring import score_payload as score_peer_payload
 # without duplicating the worker orchestration code.
 app_module.score_payload = lambda payload: score_peer_payload(payload, app_module.baseline_reference())
 
-MAX_CONFIG_BYTES = 512 * 1024
-ALLOWED_CONFIG_SUFFIXES = {".conf", ".ovpn"}
 app.config["MAX_CONTENT_LENGTH"] = max(
     int(app.config.get("MAX_CONTENT_LENGTH") or 0), 4 * 1024 * 1024
 )
 
-# wg-quick and OpenVPN can execute hooks/scripts from configuration files.
-# Provider configs uploaded through the WebUI are data, not executable input,
-# so reject directives that can start arbitrary programs inside a worker.
-WG_EXEC_DIRECTIVES = {"preup", "postup", "predown", "postdown"}
-OPENVPN_EXEC_DIRECTIVES = {
-    "script-security",
-    "up",
-    "down",
-    "route-up",
-    "ipchange",
-    "learn-address",
-    "client-connect",
-    "client-disconnect",
-    "auth-user-pass-verify",
-    "tls-verify",
-    "plugin",
-    "management",
-    "management-client",
-    "management-external-key",
-    "management-external-cert",
-}
+AUTH_USERNAME = os.environ.get("AUTH_USERNAME", "").strip()
+AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
+if bool(AUTH_USERNAME) != bool(AUTH_PASSWORD):
+    raise RuntimeError("AUTH_USERNAME and AUTH_PASSWORD must either both be set or both be empty")
+AUTH_ENABLED = bool(AUTH_USERNAME and AUTH_PASSWORD)
+CSRF_TOKEN = os.environ.get("CSRF_TOKEN", "").strip() or secrets.token_urlsafe(32)
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 UPLOAD_CARD = r'''
   <div class="card config-upload-card">
@@ -160,28 +148,37 @@ app_module._handle_worker_progress = _safe_progress_handler
 _scrub_legacy_result_ips()
 
 
-def _unsafe_config_directive(raw, suffix):
-    try:
-        text = raw.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        return "Config ist keine gültige UTF-8-Textdatei."
+def _auth_ok():
+    if not AUTH_ENABLED:
+        return True
+    auth = request.authorization
+    if not auth:
+        return False
+    return hmac.compare_digest(auth.username or "", AUTH_USERNAME) and hmac.compare_digest(
+        auth.password or "", AUTH_PASSWORD
+    )
 
-    if suffix == ".conf":
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key = stripped.split("=", 1)[0].strip().lower()
-            if key in WG_EXEC_DIRECTIVES:
-                return f"Unsichere WireGuard-Direktive blockiert: {key}."
-    elif suffix == ".ovpn":
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(("#", ";", "<")):
-                continue
-            directive = stripped.split(None, 1)[0].lower()
-            if directive in OPENVPN_EXEC_DIRECTIVES:
-                return f"Unsichere OpenVPN-Direktive blockiert: {directive}."
+
+@app.before_request
+def enforce_request_security():
+    # A fresh nonce lets the existing inline base UI run without unsafe-inline.
+    g.csp_nonce = secrets.token_urlsafe(18)
+
+    # Health checks deliberately reveal only that the process is alive.
+    if request.path == "/api/health":
+        return None
+
+    if not _auth_ok():
+        return Response(
+            "Authentication required\n",
+            401,
+            {"WWW-Authenticate": 'Basic realm="VPN Exit Bench", charset="UTF-8"'},
+        )
+
+    if request.method in MUTATING_METHODS:
+        supplied = request.headers.get("X-VPN-Bench-CSRF", "")
+        if not supplied or not hmac.compare_digest(supplied, CSRF_TOKEN):
+            return jsonify({"error": "CSRF-Prüfung fehlgeschlagen. WebUI neu laden."}), 403
     return None
 
 
@@ -227,19 +224,9 @@ def save_uploaded_configs(files, provider_override=None, overwrite=False):
             continue
 
         raw = file.read(MAX_CONFIG_BYTES + 1)
-        if len(raw) > MAX_CONFIG_BYTES:
-            skipped.append({"name": original_name, "error": "Datei ist größer als 512 KiB."})
-            continue
-        if not raw.strip():
-            skipped.append({"name": original_name, "error": "Datei ist leer."})
-            continue
-        if b"\x00" in raw:
-            skipped.append({"name": original_name, "error": "Binärdateien werden nicht akzeptiert."})
-            continue
-
-        unsafe = _unsafe_config_directive(raw, suffix)
-        if unsafe:
-            skipped.append({"name": original_name, "error": unsafe})
+        validation_error = validate_config_bytes(raw, suffix)
+        if validation_error:
+            skipped.append({"name": original_name, "error": validation_error})
             continue
 
         provider = safe_provider(provider_override or infer_provider(filename)) or "Other"
@@ -275,16 +262,27 @@ def save_uploaded_configs(files, provider_override=None, overwrite=False):
 
 @app.after_request
 def add_security_headers(response):
+    nonce = getattr(g, "csp_nonce", "")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' 'nonce-{nonce}'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     )
+    if request.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
+
+
+@app.get("/api/health")
+def health():
+    return jsonify({"ok": True})
 
 
 @app.post("/api/configs/upload")
@@ -368,9 +366,17 @@ def index_with_config_upload():
         except Exception:
             return html
 
+    nonce = getattr(g, "csp_nonce", "")
+    html = html.replace("<style>", f'<style nonce="{nonce}">', 1)
+    html = html.replace("<script>", f'<script nonce="{nonce}">', 1)
+
     marker = '<div class="card"><div class="row" style="justify-content:space-between"><h2>Configs</h2>'
     if marker in html and "Configs hinzufügen" not in html:
         html = html.replace(marker, UPLOAD_CARD + "\n" + marker, 1)
+
+    csrf_meta = f'<meta name="vpnbench-csrf" content="{CSRF_TOKEN}">'
+    if "vpnbench-csrf" not in html:
+        html = html.replace("</head>", csrf_meta + "\n</head>", 1)
 
     head_assets = [
         ("config-upload.css", '<link rel="stylesheet" href="/static/config-upload.css">'),
@@ -381,6 +387,7 @@ def index_with_config_upload():
             html = html.replace("</head>", tag + "\n</head>", 1)
 
     body_assets = [
+        ("security.js", '<script src="/static/security.js"></script>'),
         ("config-upload.js", '<script src="/static/config-upload.js"></script>'),
         ("config-manager.js", '<script src="/static/config-manager.js"></script>'),
     ]
