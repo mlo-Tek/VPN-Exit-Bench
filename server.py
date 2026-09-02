@@ -66,7 +66,7 @@ UPLOAD_CARD = r'''
 
 
 def _sanitize_result_payload(payload, provider=None):
-    """Remove the user's pre-VPN public IP from persisted benchmark data."""
+    """Remove the user's pre-VPN public IP from benchmark data."""
     try:
         clean = json.loads(json.dumps(payload))
     except Exception:
@@ -74,7 +74,7 @@ def _sanitize_result_payload(payload, provider=None):
 
     clean.pop("ip_before", None)
 
-    # A DIRECT baseline only needs throughput/reference data. Do not persist
+    # A DIRECT baseline only needs throughput/reference data. Do not retain
     # the user's public IP in its exit object either.
     if str(provider or "").lower() == "baseline":
         exit_info = clean.get("exit")
@@ -120,6 +120,24 @@ def _safe_store_result(provider, name, typ, payload):
 
 
 app_module.store_result = _safe_store_result
+
+# Sanitize the worker return value as well. This prevents ip_before from
+# surviving in the in-memory job result returned by /api/jobs/<id>.
+_original_run_worker = app_module.run_worker
+
+
+def _safe_run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
+    payload = _original_run_worker(
+        cfg=cfg,
+        forwarded_port=forwarded_port,
+        baseline=baseline,
+        progress_cb=progress_cb,
+    )
+    provider = "baseline" if baseline else (cfg or {}).get("provider")
+    return _sanitize_result_payload(payload, provider)
+
+
+app_module.run_worker = _safe_run_worker
 
 # Live progress used to expose the direct public IP before the VPN connected.
 # Keep the verification state, but never send that address to the browser.
