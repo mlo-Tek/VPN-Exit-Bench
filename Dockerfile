@@ -20,6 +20,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+RUN python -m py_compile app.py server.py worker.py worker_v2.py peer_scoring.py
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8787
