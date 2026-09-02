@@ -40,6 +40,12 @@ The project is under active development and does not yet promise semantic-versio
 - country-by-country peer matrix
 - benchmark comparison sections sort best-to-worst per metric
 - config/result lists become internally scrollable after five rows
+- added **Smart** benchmark mode as the default for substantially shorter multi-config runs
+- Smart mode prechecks Frankfurt/Amsterdam and performs the full raw-speed test only against the better reachable reference target
+- Smart mode uses shorter iPerf windows, fewer ICMP samples and fewer failed-port retries while retaining all seven EU peer regions and port-forwarding checks
+- failed regional iPerf probes fall back to the secondary datacenter endpoint when available
+- harmless ping/precheck probes run in parallel while throughput measurements remain serial to avoid self-induced bandwidth contention
+- added selectable **Deep** mode that retains the previous long FRA + AMS raw-speed measurements and longer sample windows
 
 ## 2026-09-01
 
