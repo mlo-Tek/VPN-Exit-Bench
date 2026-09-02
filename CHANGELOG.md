@@ -13,8 +13,10 @@ The project is under active development and does not yet promise semantic-versio
 - added runtime VPN-config validation in addition to upload validation
 - added optional HTTP Basic Authentication
 - added CSRF protection for state-changing API requests
-- removed `unsafe-inline` from the Content Security Policy by using per-response nonces
+- removed `unsafe-inline` from script execution with per-response CSP nonces; dynamic style attributes remain narrowly allowed for the existing UI
 - documented and supported Docker Socket Proxy deployments through `DOCKER_HOST`
+- reduced benchmark-worker capabilities to the networking capabilities required by the tests
+- added `no-new-privileges` and a worker PID limit
 - added Dependabot configuration
 - added CodeQL analysis
 - added dependency-review workflow
