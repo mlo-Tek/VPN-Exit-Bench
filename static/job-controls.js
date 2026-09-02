@@ -7,9 +7,11 @@
   let cancelledReloadScheduled=false;
 
   function installControls(){
+    const existing=document.querySelector('#jobControlBar');
+    if(existing)return true;
     const progress=document.querySelector('#progress');
     const progressBar=progress?.querySelector('.progressbar');
-    if(!progress||!progressBar||document.querySelector('#jobControlBar'))return false;
+    if(!progress||!progressBar)return false;
 
     const bar=document.createElement('div');
     bar.id='jobControlBar';
@@ -125,7 +127,8 @@
   }
 
   function patchProgress(){
-    if(typeof window.showProgress!=='function'||window.showProgress.__vpnBenchJobControls)return false;
+    if(typeof window.showProgress!=='function')return false;
+    if(window.showProgress.__vpnBenchJobControls)return true;
     const original=window.showProgress;
     const wrapped=function(job){
       original(job);
@@ -137,7 +140,8 @@
   }
 
   function patchFollowJob(){
-    if(typeof window.followJob!=='function'||window.followJob.__vpnBenchJobControls)return false;
+    if(typeof window.followJob!=='function')return false;
+    if(window.followJob.__vpnBenchJobControls)return true;
     const wrapped=async function(jobId,onDone){
       if(followingJobId===jobId)return;
       followingJobId=jobId;
@@ -170,7 +174,9 @@
   let attempts=0;
   const timer=setInterval(()=>{
     attempts+=1;
-    const ready=installControls()&&patchProgress()&&patchFollowJob();
-    if(ready||attempts>=50)clearInterval(timer);
+    const controlsReady=installControls();
+    const progressReady=patchProgress();
+    const followReady=patchFollowJob();
+    if((controlsReady&&progressReady&&followReady)||attempts>=50)clearInterval(timer);
   },80);
 })();
