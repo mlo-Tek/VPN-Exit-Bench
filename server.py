@@ -1,5 +1,7 @@
 from pathlib import Path
+import json
 import re
+import sqlite3
 
 from flask import jsonify, request
 from werkzeug.utils import secure_filename
@@ -9,8 +11,8 @@ from app import CONFIG_DIR, app, benchmark_active, configs
 from peer_scoring import score_payload as score_peer_payload
 
 # app.run_worker resolves score_payload from the app module at runtime. Replace
-# the legacy speed-only scorer with the v2 raw-speed + EU-peer scorer without
-# duplicating the worker orchestration code.
+# the legacy speed-only scorer with the current raw-speed + EU-peer scorer
+# without duplicating the worker orchestration code.
 app_module.score_payload = lambda payload: score_peer_payload(payload, app_module.baseline_reference())
 
 MAX_CONFIG_BYTES = 512 * 1024
@@ -18,6 +20,28 @@ ALLOWED_CONFIG_SUFFIXES = {".conf", ".ovpn"}
 app.config["MAX_CONTENT_LENGTH"] = max(
     int(app.config.get("MAX_CONTENT_LENGTH") or 0), 4 * 1024 * 1024
 )
+
+# wg-quick and OpenVPN can execute hooks/scripts from configuration files.
+# Provider configs uploaded through the WebUI are data, not executable input,
+# so reject directives that can start arbitrary programs inside a worker.
+WG_EXEC_DIRECTIVES = {"preup", "postup", "predown", "postdown"}
+OPENVPN_EXEC_DIRECTIVES = {
+    "script-security",
+    "up",
+    "down",
+    "route-up",
+    "ipchange",
+    "learn-address",
+    "client-connect",
+    "client-disconnect",
+    "auth-user-pass-verify",
+    "tls-verify",
+    "plugin",
+    "management",
+    "management-client",
+    "management-external-key",
+    "management-external-cert",
+}
 
 UPLOAD_CARD = r'''
   <div class="card config-upload-card">
@@ -39,6 +63,108 @@ UPLOAD_CARD = r'''
     <div id="uploadStatus" class="uploadstatus"></div>
   </div>
 '''
+
+
+def _sanitize_result_payload(payload, provider=None):
+    """Remove the user's pre-VPN public IP from persisted benchmark data."""
+    try:
+        clean = json.loads(json.dumps(payload))
+    except Exception:
+        clean = dict(payload or {})
+
+    clean.pop("ip_before", None)
+
+    # A DIRECT baseline only needs throughput/reference data. Do not persist
+    # the user's public IP in its exit object either.
+    if str(provider or "").lower() == "baseline":
+        exit_info = clean.get("exit")
+        if isinstance(exit_info, dict):
+            exit_info = dict(exit_info)
+            exit_info.pop("ip", None)
+            clean["exit"] = exit_info
+    return clean
+
+
+def _scrub_legacy_result_ips():
+    """One-time-at-startup cleanup for results written by older versions."""
+    try:
+        c = app_module.db()
+        rows = c.execute("SELECT id,provider,payload FROM results").fetchall()
+        for row_id, provider, raw_payload in rows:
+            try:
+                payload = json.loads(raw_payload)
+            except Exception:
+                continue
+            clean = _sanitize_result_payload(payload, provider)
+            if clean != payload:
+                c.execute(
+                    "UPDATE results SET payload=? WHERE id=?",
+                    (json.dumps(clean), row_id),
+                )
+        c.commit()
+        c.close()
+    except (sqlite3.Error, OSError, ValueError):
+        pass
+
+
+_original_store_result = app_module.store_result
+
+
+def _safe_store_result(provider, name, typ, payload):
+    return _original_store_result(
+        provider,
+        name,
+        typ,
+        _sanitize_result_payload(payload, provider),
+    )
+
+
+app_module.store_result = _safe_store_result
+
+# Live progress used to expose the direct public IP before the VPN connected.
+# Keep the verification state, but never send that address to the browser.
+_original_progress_handler = app_module._handle_worker_progress
+
+
+def _safe_progress_handler(job_id, item_index, total_items, config_label, event):
+    if isinstance(event, dict) and event.get("stage") == "ip_before_done":
+        event = dict(event)
+        details = dict(event.get("details") or {})
+        had_ip = bool(details.pop("ip", None))
+        details["verified"] = had_ip
+        event["details"] = details
+    return _original_progress_handler(
+        job_id, item_index, total_items, config_label, event
+    )
+
+
+app_module._handle_worker_progress = _safe_progress_handler
+_scrub_legacy_result_ips()
+
+
+def _unsafe_config_directive(raw, suffix):
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return "Config ist keine gültige UTF-8-Textdatei."
+
+    if suffix == ".conf":
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip().lower()
+            if key in WG_EXEC_DIRECTIVES:
+                return f"Unsichere WireGuard-Direktive blockiert: {key}."
+    elif suffix == ".ovpn":
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", ";", "<")):
+                continue
+            directive = stripped.split(None, 1)[0].lower()
+            if directive in OPENVPN_EXEC_DIRECTIVES:
+                return f"Unsichere OpenVPN-Direktive blockiert: {directive}."
+    return None
 
 
 def safe_provider(value):
@@ -93,6 +219,11 @@ def save_uploaded_configs(files, provider_override=None, overwrite=False):
             skipped.append({"name": original_name, "error": "Binärdateien werden nicht akzeptiert."})
             continue
 
+        unsafe = _unsafe_config_directive(raw, suffix)
+        if unsafe:
+            skipped.append({"name": original_name, "error": unsafe})
+            continue
+
         provider = safe_provider(provider_override or infer_provider(filename)) or "Other"
         provider_dir = CONFIG_DIR / provider
         provider_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +253,20 @@ def save_uploaded_configs(files, provider_override=None, overwrite=False):
             "overwritten": existed,
         })
     return uploaded, skipped
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+    )
+    return response
 
 
 @app.post("/api/configs/upload")
