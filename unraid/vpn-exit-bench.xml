@@ -6,22 +6,29 @@
     <Network>bridge</Network>
     <WebUI>http://[IP]:[PORT:8787]/</WebUI>
     <Privileged>false</Privileged>
+    <ExtraParams>--security-opt=no-new-privileges:true</ExtraParams>
     <Project>https://github.com/mlo-Tek/VPN-Exit-Bench</Project>
     <Support>https://github.com/mlo-Tek/VPN-Exit-Bench/issues</Support>
-    <Overview>Unraid web UI for benchmarking WireGuard and OpenVPN exit locations in isolated short-lived Docker workers without changing the Unraid host route.</Overview>
+    <Overview>Unraid-native WebUI for benchmarking WireGuard and OpenVPN exits with raw-speed and EU peer-connectivity tests. Keep the WebUI on a trusted LAN; Docker Socket Proxy mode is recommended.</Overview>
     <Beta>True</Beta>
     <Category>Network: Tools:</Category>
     <TemplateURL>https://raw.githubusercontent.com/mlo-Tek/VPN-Exit-Bench/main/unraid/vpn-exit-bench.xml</TemplateURL>
     <Maintainer>
         <WebPage>https://github.com/mlo-Tek</WebPage>
     </Maintainer>
-    <Changes>### 2026-09-01
+    <Changes>### 2026-09-02
 
-Initial Unraid XML template.</Changes>
-    <Config Name="Web UI Port" Target="8787" Default="8787" Mode="tcp" Description="VPN Exit Bench Web UI" Type="Port" Display="always" Required="true" Mask="false">8787</Config>
+Public-release security hardening: optional authentication, CSRF protection, runtime config validation and Docker Socket Proxy support.</Changes>
+
+    <Config Name="Web UI Port" Target="8787" Default="8787" Mode="tcp" Description="VPN Exit Bench WebUI. Do not expose this port directly to the public internet." Type="Port" Display="always" Required="true" Mask="false">8787</Config>
     <Config Name="Appdata" Target="/config" Default="/mnt/cache/appdata/vpn-exit-bench" Mode="rw" Description="Persistent database and VPN config storage" Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/vpn-exit-bench</Config>
-    <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Required to launch isolated VPN test workers" Type="Path" Display="advanced" Required="true" Mask="false">/var/run/docker.sock</Config>
-    <Config Name="Worker Image" Target="WORKER_IMAGE" Default="ghcr.io/mlo-tek/vpn-exit-bench:latest" Description="Docker image used for short-lived VPN test workers" Type="Variable" Display="advanced" Required="true" Mask="false">ghcr.io/mlo-tek/vpn-exit-bench:latest</Config>
-    <Config Name="Host VPN Config Directory" Target="HOST_CONFIG_DIR" Default="/mnt/cache/appdata/vpn-exit-bench/vpns" Description="Host path containing provider folders and VPN config files" Type="Variable" Display="advanced" Required="true" Mask="false">/mnt/cache/appdata/vpn-exit-bench/vpns</Config>
-    <Config Name="Download Test Size MB" Target="DOWNLOAD_MB" Default="100" Description="Amount downloaded per throughput test in MB" Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+
+    <Config Name="WebUI Username" Target="AUTH_USERNAME" Default="" Description="Optional HTTP Basic Auth username. Set together with WebUI Password." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+    <Config Name="WebUI Password" Target="AUTH_PASSWORD" Default="" Description="Optional HTTP Basic Auth password. Strongly recommended when other LAN clients can reach the WebUI." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+
+    <Config Name="Docker Host (recommended proxy mode)" Target="DOCKER_HOST" Default="" Description="Leave empty for the local Docker socket. Recommended secure mode: tcp://vpn-exit-bench-socket-proxy:2375 on a private user-defined Docker network." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+    <Config Name="Docker Socket (legacy/direct mode)" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Direct Docker daemon access. Remove this mapping when DOCKER_HOST points to a Docker Socket Proxy." Type="Path" Display="advanced" Required="false" Mask="false">/var/run/docker.sock</Config>
+
+    <Config Name="Worker Image" Target="WORKER_IMAGE" Default="ghcr.io/mlo-tek/vpn-exit-bench:latest" Description="Docker image used for short-lived VPN benchmark workers" Type="Variable" Display="advanced" Required="true" Mask="false">ghcr.io/mlo-tek/vpn-exit-bench:latest</Config>
+    <Config Name="Host VPN Config Directory" Target="HOST_CONFIG_DIR" Default="/mnt/cache/appdata/vpn-exit-bench/vpns" Description="Fallback host path containing provider folders and VPN config files" Type="Variable" Display="advanced" Required="true" Mask="false">/mnt/cache/appdata/vpn-exit-bench/vpns</Config>
 </Container>
