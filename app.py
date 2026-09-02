@@ -23,6 +23,8 @@ REFERENCE_DOWN_MBPS = float(os.environ.get("REFERENCE_DOWN_MBPS", "500"))
 REFERENCE_UP_MBPS = float(os.environ.get("REFERENCE_UP_MBPS", "200"))
 PROGRESS_PREFIX = "__PROGRESS__"
 VALID_BENCHMARK_MODES = {"smart", "deep"}
+ACTIVE_JOB_STATES = {"queued", "running", "pausing", "paused", "cancelling"}
+TERMINAL_JOB_STATES = {"done", "error", "cancelled"}
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -30,6 +32,7 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 BENCH_LOCK = threading.Lock()
+JOB_CONTEXT = threading.local()
 
 
 def normalize_benchmark_mode(value):
@@ -162,6 +165,19 @@ def _job_update(job_id, **changes):
         if job_id in JOBS: JOBS[job_id].update(changes)
 
 
+def _job_snapshot(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def _job_flag(job_id, key):
+    if not job_id:
+        return False
+    with JOBS_LOCK:
+        return bool((JOBS.get(job_id) or {}).get(key))
+
+
 def _append_job_event(job_id, event):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -170,12 +186,61 @@ def _append_job_event(job_id, event):
         if len(events) > 40: del events[:-40]
 
 
+def _finish_cancelled(job_id, results=None):
+    results = list(results or [])
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return
+        job.update(
+            status="cancelled",
+            pause_requested=False,
+            cancel_requested=True,
+            worker_percent=0.0,
+            phase="Benchmark abgebrochen",
+            finished_at=int(time.time()),
+            completed=len(results),
+            results=results,
+        )
+
+
+def _wait_if_paused(job_id, results):
+    while True:
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job:
+                return False
+            if job.get("cancel_requested"):
+                pass_cancel = True
+            else:
+                pass_cancel = False
+                if not job.get("pause_requested"):
+                    if job.get("status") == "paused":
+                        job["status"] = "running"
+                        job["phase"] = "Benchmark wird fortgesetzt"
+                    return True
+                job["status"] = "paused"
+                job["phase"] = "Benchmark pausiert – Fortsetzen oder Abbrechen"
+                job["worker_percent"] = 0.0
+        if pass_cancel:
+            _finish_cancelled(job_id, results)
+            return False
+        time.sleep(0.25)
+
+
 def _handle_worker_progress(job_id, item_index, total_items, config_label, event):
     worker_percent = float(event.get("percent", 0) or 0)
     overall_percent = (((item_index - 1) + worker_percent / 100.0) / max(total_items, 1)) * 100.0
     details = event.get("details") or {}
     normalized = {"config": config_label, "stage": event.get("stage"), "label": event.get("label"), "worker_percent": round(worker_percent, 1), "overall_percent": round(overall_percent, 1), "details": details, "ts": event.get("ts") or int(time.time())}
-    _job_update(job_id, percent=round(overall_percent, 1), worker_percent=round(worker_percent, 1), phase=event.get("label") or "", live=details, last_event=normalized)
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job or job.get("status") in {"cancelling", "cancelled"}:
+            return
+        phase = event.get("label") or ""
+        if job.get("pause_requested") and job.get("status") == "pausing":
+            phase = f"Pause angefordert · {phase}"
+        job.update(percent=round(overall_percent, 1), worker_percent=round(worker_percent, 1), phase=phase, live=details, last_event=normalized)
     stage = event.get("stage") or ""
     if stage.endswith("_done") or stage in {"vpn_connected", "direct", "done", "error"}: _append_job_event(job_id, normalized)
 
@@ -183,6 +248,9 @@ def _handle_worker_progress(job_id, item_index, total_items, config_label, event
 def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None, mode="smart"):
     client = docker.from_env()
     mode = normalize_benchmark_mode(mode)
+    job_id = getattr(JOB_CONTEXT, "job_id", None)
+    if job_id and _job_flag(job_id, "cancel_requested"):
+        return {"ok": False, "cancelled": True, "benchmark_mode": mode}
     environment = {
         "VPN_TYPE": "none" if baseline else cfg["type"],
         "VPN_PROVIDER": "baseline" if baseline else cfg["provider"],
@@ -208,10 +276,14 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None, mod
             devices=["/dev/net/tun:/dev/net/tun"],
             volumes=volumes,
             environment=environment,
-            labels={"vpn-exit-bench-worker": "1", "vpn-exit-bench-mode": mode},
+            labels={"vpn-exit-bench-worker": "1", "vpn-exit-bench-mode": mode, "vpn-exit-bench-job": job_id or "none"},
             network_mode="bridge",
         )
         while True:
+            if job_id and _job_flag(job_id, "cancel_requested"):
+                try: container.kill()
+                except Exception: pass
+                return {"ok": False, "cancelled": True, "benchmark_mode": mode}
             try:
                 container.reload(); text = container.logs(stdout=True, stderr=True).decode(errors="ignore")
             except Exception:
@@ -251,36 +323,57 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None, mod
 def run_job(job_id, items, baseline=False, mode="smart"):
     mode = normalize_benchmark_mode(mode)
     with BENCH_LOCK:
-        _job_update(job_id, status="running", started_at=int(time.time()), current=0, total=len(items), percent=0.0, worker_percent=0.0, phase=f"{mode.upper()} Benchmark wird vorbereitet", events=[], live={}, benchmark_mode=mode)
         results = []
+        JOB_CONTEXT.job_id = job_id
         try:
+            if _job_flag(job_id, "cancel_requested"):
+                _finish_cancelled(job_id, results)
+                return
+            if not _wait_if_paused(job_id, results):
+                return
+            _job_update(job_id, status="running", started_at=int(time.time()), current=0, total=len(items), percent=0.0, worker_percent=0.0, phase=f"{mode.upper()} Benchmark wird vorbereitet", events=[], live={}, benchmark_mode=mode)
             for index, item in enumerate(items, start=1):
+                if _job_flag(job_id, "cancel_requested"):
+                    _finish_cancelled(job_id, results)
+                    return
+                if not _wait_if_paused(job_id, results):
+                    return
                 cfg, port = item.get("config"), item.get("port", 0)
                 label = "DIRECT baseline" if baseline else f"{cfg['provider']} / {cfg['name']}"
                 _job_update(job_id, current=index, current_label=label, worker_percent=0.0, phase="Worker wird gestartet", live={})
                 def progress_cb(event, idx=index, total=len(items), lbl=label): _handle_worker_progress(job_id, idx, total, lbl, event)
                 payload = run_worker(cfg=None if baseline else cfg, forwarded_port=port, baseline=baseline, progress_cb=progress_cb, mode=mode)
+                if _job_flag(job_id, "cancel_requested") or payload.get("cancelled"):
+                    _finish_cancelled(job_id, results)
+                    return
                 if baseline: store_result("baseline", "DIRECT", "baseline", payload)
                 else: store_result(cfg["provider"], cfg["name"], cfg["type"], payload)
                 results.append(payload)
-                _job_update(job_id, percent=round((index / max(len(items), 1)) * 100.0, 1), worker_percent=100.0, phase=f"{label}: gespeichert")
-            _job_update(job_id, status="done", percent=100.0, worker_percent=100.0, phase="Benchmark abgeschlossen", finished_at=int(time.time()), results=results)
+                _job_update(job_id, completed=index, percent=round((index / max(len(items), 1)) * 100.0, 1), worker_percent=100.0, phase=f"{label}: gespeichert", results=list(results))
+                if index < len(items) and not _wait_if_paused(job_id, results):
+                    return
+            _job_update(job_id, status="done", percent=100.0, worker_percent=100.0, phase="Benchmark abgeschlossen", finished_at=int(time.time()), completed=len(results), results=results)
         except Exception as e:
-            _job_update(job_id, status="error", error=str(e), phase="Benchmark fehlgeschlagen", finished_at=int(time.time()), results=results)
+            if _job_flag(job_id, "cancel_requested"):
+                _finish_cancelled(job_id, results)
+            else:
+                _job_update(job_id, status="error", error=str(e), phase="Benchmark fehlgeschlagen", finished_at=int(time.time()), completed=len(results), results=results)
+        finally:
+            JOB_CONTEXT.job_id = None
 
 
 def create_job(items, baseline=False, mode="smart"):
     mode = normalize_benchmark_mode(mode)
     job_id = uuid.uuid4().hex
     with JOBS_LOCK:
-        JOBS[job_id] = {"id": job_id, "status": "queued", "created_at": int(time.time()), "current": 0, "total": len(items), "current_label": "", "baseline": baseline, "benchmark_mode": mode, "percent": 0.0, "worker_percent": 0.0, "phase": "Wartet auf freien Benchmark-Slot", "events": [], "live": {}}
+        JOBS[job_id] = {"id": job_id, "status": "queued", "created_at": int(time.time()), "current": 0, "completed": 0, "total": len(items), "current_label": "", "baseline": baseline, "benchmark_mode": mode, "percent": 0.0, "worker_percent": 0.0, "phase": "Wartet auf freien Benchmark-Slot", "events": [], "live": {}, "pause_requested": False, "cancel_requested": False, "results": []}
     threading.Thread(target=run_job, args=(job_id, items, baseline, mode), daemon=True).start()
     return job_id
 
 
 def benchmark_active():
     with JOBS_LOCK:
-        return any(job.get("status") in {"queued", "running"} for job in JOBS.values())
+        return any(job.get("status") in ACTIVE_JOB_STATES for job in JOBS.values())
 
 
 @app.get("/")
@@ -316,10 +409,12 @@ def clear_results():
 
 @app.get("/api/jobs/active")
 def active_job():
+    priority = {"cancelling": 0, "pausing": 1, "running": 2, "paused": 3, "queued": 4}
     with JOBS_LOCK:
-        active = [job for job in JOBS.values() if job.get("status") in {"queued", "running"}]
+        active = [job for job in JOBS.values() if job.get("status") in ACTIVE_JOB_STATES]
         if not active: return jsonify({"job": None})
-        active.sort(key=lambda x: x.get("created_at", 0), reverse=True); return jsonify({"job": dict(active[0])})
+        active.sort(key=lambda x: (priority.get(x.get("status"), 9), -int(x.get("created_at", 0))))
+        return jsonify({"job": dict(active[0])})
 
 @app.get("/api/jobs/<job_id>")
 def job_status(job_id):
@@ -327,6 +422,58 @@ def job_status(job_id):
         job = JOBS.get(job_id)
         if not job: return jsonify({"error": "Unknown job"}), 404
         return jsonify(dict(job))
+
+@app.post("/api/jobs/<job_id>/pause")
+def pause_job(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job: return jsonify({"error": "Unknown job"}), 404
+        status = job.get("status")
+        if status in TERMINAL_JOB_STATES:
+            return jsonify({"error": "Dieser Benchmark ist bereits beendet.", "job": dict(job)}), 409
+        job["pause_requested"] = True
+        if status == "running":
+            job["status"] = "pausing"
+            job["phase"] = "Pause angefordert – aktuelle Config wird noch abgeschlossen"
+        elif status == "queued":
+            job["status"] = "paused"
+            job["phase"] = "Benchmark pausiert – noch nicht gestartet"
+        return jsonify({"ok": True, "job": dict(job)})
+
+@app.post("/api/jobs/<job_id>/resume")
+def resume_job(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job: return jsonify({"error": "Unknown job"}), 404
+        status = job.get("status")
+        if status in TERMINAL_JOB_STATES:
+            return jsonify({"error": "Dieser Benchmark ist bereits beendet.", "job": dict(job)}), 409
+        if status == "cancelling":
+            return jsonify({"error": "Der Benchmark wird bereits abgebrochen.", "job": dict(job)}), 409
+        job["pause_requested"] = False
+        if status in {"paused", "pausing"}:
+            job["status"] = "running" if job.get("started_at") else "queued"
+            job["phase"] = "Benchmark wird fortgesetzt"
+        return jsonify({"ok": True, "job": dict(job)})
+
+@app.post("/api/jobs/<job_id>/cancel")
+def cancel_job(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job: return jsonify({"error": "Unknown job"}), 404
+        status = job.get("status")
+        if status == "cancelled":
+            return jsonify({"ok": True, "job": dict(job)})
+        if status in {"done", "error"}:
+            return jsonify({"error": "Dieser Benchmark ist bereits beendet.", "job": dict(job)}), 409
+        job["cancel_requested"] = True
+        job["pause_requested"] = False
+        if status in {"queued", "paused"}:
+            job.update(status="cancelled", phase="Benchmark abgebrochen", finished_at=int(time.time()), worker_percent=0.0)
+            return jsonify({"ok": True, "job": dict(job)})
+        job["status"] = "cancelling"
+        job["phase"] = "Benchmark wird abgebrochen – aktueller Worker wird beendet"
+        return jsonify({"ok": True, "job": dict(job)}), 202
 
 @app.post("/api/test")
 def test():
