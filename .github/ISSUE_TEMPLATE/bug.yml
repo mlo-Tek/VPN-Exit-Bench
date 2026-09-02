@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible VPN Exit Bench problem
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do **not** paste VPN configs, private keys, credentials, tokens or security exploit details here. Use the private security process in SECURITY.md for vulnerabilities.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: image
+    attributes:
+      label: Image / commit
+      description: GHCR image tag, digest or commit if known
+  - type: input
+    id: unraid
+    attributes:
+      label: Unraid version
+  - type: dropdown
+    id: vpn_type
+    attributes:
+      label: VPN config type
+      options:
+        - WireGuard
+        - OpenVPN
+        - Baseline / direct
+        - Not applicable
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove public/home IPs, keys, credentials and other sensitive data before posting.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Sensitive-data check
+      options:
+        - label: I checked that this report contains no VPN private keys, credentials, tokens or real VPN config contents.
+          required: true
