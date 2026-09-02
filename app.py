@@ -9,6 +9,11 @@ import time
 import uuid
 from pathlib import Path
 
+# docker.from_env() falls back to the local Unix socket when DOCKER_HOST is not
+# set. Unraid templates can leave the optional proxy variable empty safely.
+if not os.environ.get("DOCKER_HOST", "").strip():
+    os.environ.pop("DOCKER_HOST", None)
+
 app = Flask(__name__)
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config/vpns"))
 DB_PATH = Path(os.environ.get("DB_PATH", "/config/results.db"))
@@ -177,7 +182,21 @@ def run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
         host_path = resolve_host_config_path(client, cfg["rel"]); volumes[host_path] = {"bind": "/vpn/config", "mode": "ro"}; environment["VPN_CONFIG"] = "/vpn/config"
     container, started, parsed_lines = None, time.time(), 0
     try:
-        container = client.containers.run(IMAGE, command=["python", "worker.py"], detach=True, cap_add=["NET_ADMIN"], devices=["/dev/net/tun:/dev/net/tun"], volumes=volumes, environment=environment, labels={"vpn-exit-bench-worker": "1"}, network_mode="bridge")
+        container = client.containers.run(
+            IMAGE,
+            command=["python", "worker.py"],
+            detach=True,
+            cap_drop=["ALL"],
+            cap_add=["NET_ADMIN", "NET_RAW", "NET_BIND_SERVICE"],
+            security_opt=["no-new-privileges:true"],
+            pids_limit=256,
+            init=True,
+            devices=["/dev/net/tun:/dev/net/tun"],
+            volumes=volumes,
+            environment=environment,
+            labels={"vpn-exit-bench-worker": "1"},
+            network_mode="bridge",
+        )
         while True:
             try:
                 container.reload(); text = container.logs(stdout=True, stderr=True).decode(errors="ignore")
