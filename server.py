@@ -114,12 +114,13 @@ app_module.store_result = _safe_store_result
 _original_run_worker = app_module.run_worker
 
 
-def _safe_run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None):
+def _safe_run_worker(cfg=None, forwarded_port=0, baseline=False, progress_cb=None, mode="smart"):
     payload = _original_run_worker(
         cfg=cfg,
         forwarded_port=forwarded_port,
         baseline=baseline,
         progress_cb=progress_cb,
+        mode=mode,
     )
     provider = "baseline" if baseline else (cfg or {}).get("provider")
     return _sanitize_result_payload(payload, provider)
