@@ -303,12 +303,12 @@ def iperf_region_direction(region, reverse=False):
             max_tries=PEER_MAX_TRIES,
         )
         result["target_label"] = endpoint["label"]
-        attempts.append(result)
+        attempts.append(dict(result))
         if result.get("ok"):
             result["attempts"] = attempts
             return result
 
-    failed = attempts[-1] if attempts else {"ok": False, "mbps": None, "error": "No peer endpoint configured"}
+    failed = dict(attempts[-1]) if attempts else {"ok": False, "mbps": None, "error": "No peer endpoint configured"}
     failed["attempts"] = attempts
     return failed
 
