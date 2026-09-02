@@ -175,6 +175,9 @@ Set **both** to enable HTTP Basic Authentication. If both are empty, authenticat
 
 When enabled, the browser shows its normal HTTP authentication prompt. Use a strong unique password.
 
+> [!CAUTION]
+> HTTP Basic Authentication is **authentication, not encryption**. Over plain `http://` the credentials are only Base64-encoded and can be read by anyone able to intercept that connection. Use it only on a trusted LAN, or terminate HTTPS at a trusted local reverse proxy/TLS endpoint. This still does **not** make direct public internet exposure recommended.
+
 CSRF protection for state-changing API requests is enabled regardless of whether Basic Authentication is configured.
 
 Authentication reduces accidental/LAN access risk, but **does not make direct public internet exposure recommended**, especially because the application can create Docker containers.
