@@ -12,6 +12,19 @@
     script.dataset.vpnbenchBenchmarkMode='1';
     document.body.appendChild(script);
   }
+  if(!document.querySelector('link[data-vpnbench-job-controls]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/static/job-controls.css';
+    link.dataset.vpnbenchJobControls='1';
+    document.head.appendChild(link);
+  }
+  if(!document.querySelector('script[data-vpnbench-job-controls]')){
+    const script=document.createElement('script');
+    script.src='/static/job-controls.js';
+    script.dataset.vpnbenchJobControls='1';
+    document.body.appendChild(script);
+  }
   if(!document.querySelector('link[data-vpnbench-compare]')){
     const link=document.createElement('link');
     link.rel='stylesheet';
