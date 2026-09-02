@@ -18,6 +18,19 @@
     script.dataset.vpnbenchCompareSort='1';
     document.body.appendChild(script);
   }
+  if(!document.querySelector('link[data-vpnbench-peer-map]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/static/peer-map.css';
+    link.dataset.vpnbenchPeerMap='1';
+    document.head.appendChild(link);
+  }
+  if(!document.querySelector('script[data-vpnbench-peer-map]')){
+    const script=document.createElement('script');
+    script.src='/static/peer-map.js';
+    script.dataset.vpnbenchPeerMap='1';
+    document.body.appendChild(script);
+  }
 
   const filesInput=document.querySelector('#configFiles');
   const dropzone=document.querySelector('#dropzone');
@@ -27,14 +40,13 @@
   if(!filesInput||!dropzone||!uploadBtn)return;
 
   let selected=[];
-  const h=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const h=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));
   const valid=name=>/\.(conf|ovpn)$/i.test(String(name||''));
 
   function setFiles(files){
     const all=[...(files||[])];
     selected=all.filter(f=>valid(f.name));
     const ignored=all.length-selected.length;
-
     if(!selected.length){
       selectedEl.textContent=ignored?'Keine gültigen .conf/.ovpn-Dateien ausgewählt.':'Keine Dateien ausgewählt.';
     }else{
@@ -53,18 +65,15 @@
     uploadBtn.disabled=true;
     uploadBtn.textContent='Lade hoch…';
     statusEl.className='uploadstatus';
-
     const data=new FormData();
     data.append('overwrite','1');
     selected.forEach(file=>data.append('files',file,file.name));
-
     try{
       const response=await fetch('/api/configs/upload',{method:'POST',body:data});
       const result=await response.json();
       const uploaded=result.uploaded||[];
       const skipped=result.skipped||[];
       const lines=[];
-
       if(uploaded.length){
         const replaced=uploaded.filter(x=>x.overwritten).length;
         lines.push(`<b>${uploaded.length} Config${uploaded.length===1?'':'s'} gespeichert.</b>${replaced?` ${replaced} ersetzt.`:''}`);
@@ -73,7 +82,6 @@
         lines.push(skipped.map(x=>`${h(x.name)}: ${h(x.error)}`).join('<br>'));
       }
       status(lines.join('<br>')||h(result.error||'Upload fehlgeschlagen'),!response.ok&&!uploaded.length);
-
       if(uploaded.length){
         selected=[];
         filesInput.value='';
@@ -89,14 +97,8 @@
   }
 
   filesInput.addEventListener('change',()=>setFiles(filesInput.files));
-  ['dragenter','dragover'].forEach(type=>dropzone.addEventListener(type,event=>{
-    event.preventDefault();
-    dropzone.classList.add('drag');
-  }));
-  ['dragleave','drop'].forEach(type=>dropzone.addEventListener(type,event=>{
-    event.preventDefault();
-    dropzone.classList.remove('drag');
-  }));
+  ['dragenter','dragover'].forEach(type=>dropzone.addEventListener(type,event=>{event.preventDefault();dropzone.classList.add('drag')}));
+  ['dragleave','drop'].forEach(type=>dropzone.addEventListener(type,event=>{event.preventDefault();dropzone.classList.remove('drag')}));
   dropzone.addEventListener('drop',event=>setFiles(event.dataTransfer.files));
   uploadBtn.addEventListener('click',upload);
 })();
