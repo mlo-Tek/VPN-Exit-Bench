@@ -36,13 +36,13 @@ jobs:
         run: python -m py_compile app.py server.py worker.py worker_v2.py peer_scoring.py config_security.py
 
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
 
       - name: Audit Python dependencies
-        run: pip-audit -r requirements.txt
+        run: python -m pip_audit -r requirements.txt
 
       - name: Bandit high-severity scan
-        run: bandit -r app.py server.py worker.py worker_v2.py peer_scoring.py config_security.py -lll
+        run: python -m bandit -r app.py server.py worker.py worker_v2.py peer_scoring.py config_security.py -lll
 
   repository-scan:
     name: Trivy repository scan
@@ -61,6 +61,7 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          trivyignores: .trivyignore
           exit-code: '1'
           format: table
 
