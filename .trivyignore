@@ -1,0 +1,7 @@
+# DS-0002: The published image serves both as the web app and as the short-lived
+# VPN worker image. The worker must configure network interfaces/routing and the
+# legacy direct-Docker-socket deployment remains supported for compatibility.
+# Runtime worker capabilities are explicitly dropped and re-added narrowly in
+# app.py; the recommended deployment places Docker API access behind the socket
+# proxy. Revisit this exception if main/worker images are split in the future.
+DS-0002
