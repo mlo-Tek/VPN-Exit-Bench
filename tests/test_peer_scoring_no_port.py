@@ -44,4 +44,21 @@ def test_torrent_score_weights_prioritize_peer_and_speed():
         "eu_peer": 50,
         "stability": 10,
     }
-    assert result["torrent_score"]["model"] == "torrent-eu-peer-v4-no-port"
+    assert result["torrent_score"]["model"] == "torrent-eu-peer-v5-reverse-aware-no-port"
+    assert result["torrent_score"]["model_version"] == 5
+
+
+def test_untrustworthy_reverse_peer_download_is_excluded_from_region_score():
+    payload = _payload("unknown")
+    payload["peer_connectivity"]["regions"]["DE"].update({
+        "download_mbps": 1.1,
+        "upload_mbps": 190.0,
+        "download_trustworthy": False,
+    })
+
+    result = score_payload(payload, REFERENCE)
+    de = result["peer_connectivity"]["regions"]["DE"]
+
+    assert de["score_components"]["download"] is None
+    assert de["score_components"]["download_trustworthy"] is False
+    assert de["score"] > 70

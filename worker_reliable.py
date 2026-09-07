@@ -1,6 +1,8 @@
 import math
 import re
 import statistics
+import subprocess
+import time
 
 import worker_v2 as base
 
@@ -12,8 +14,22 @@ RAW_TARGETS = [
     {"key": "ams_eranium", "label": "Eranium Amsterdam", "host": "iperf-ams-nl.eranium.net", "ports": list(range(5201, 5211))},
 ]
 
+# Reverse-mode iPerf on public servers is not uniformly reliable. Some servers
+# heavily throttle or mishandle -R while normal client->server throughput stays
+# healthy. When every selected reverse iPerf target looks suspiciously slow,
+# verify raw download with ordinary HTTPS against Hetzner's documented speed
+# test files. This is only a fallback, so normal fast runs remain fast.
+HTTP_DOWNLOAD_TARGETS = [
+    {"key": "hetzner_fsn", "label": "Hetzner Falkenstein", "url": "https://fsn1-speed.hetzner.com/100MB.bin"},
+    {"key": "hetzner_nbg", "label": "Hetzner Nürnberg", "url": "https://nbg1-speed.hetzner.com/100MB.bin"},
+]
+
 SMART = base.BENCHMARK_MODE == "smart"
 SMART_PEER_FALLBACK_MBPS = 80.0
+SMART_HTTP_FALLBACK_MBPS = 80.0
+PEER_REVERSE_UNTRUSTED_MBPS = 20.0
+PEER_REVERSE_MIN_UPLOAD_MBPS = 80.0
+PEER_REVERSE_MAX_RATIO = 0.20
 
 
 def reliable_ping_stats(host, count=None):
@@ -55,6 +71,29 @@ def robust_aggregate_ping(results):
     }
 
 
+def reliable_dns_test():
+    started = time.time()
+    try:
+        p = base.run(["nslookup", "cloudflare.com"], timeout=5)
+        return {
+            "ok": p.returncode == 0,
+            "ms": round((time.time() - started) * 1000, 1),
+            "error": None if p.returncode == 0 else (p.stderr or p.stdout).strip()[-300:],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "ms": round((time.time() - started) * 1000, 1),
+            "error": "DNS lookup timed out",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "ms": round((time.time() - started) * 1000, 1),
+            "error": str(exc),
+        }
+
+
 def _quick_probe(target):
     return base.iperf_once(
         target["host"],
@@ -64,6 +103,51 @@ def _quick_probe(target):
         duration=1 if SMART else 2,
         max_tries=1 if SMART else max(3, base.IPERF_MAX_TRIES),
     )
+
+
+def _http_download_once(target, max_time=None):
+    limit = int(max_time or (5 if SMART else 8))
+    cmd = [
+        "curl", "-4", "-L", "-sS",
+        "--connect-timeout", "3",
+        "--max-time", str(limit),
+        "-o", "/dev/null",
+        "-w", "%{speed_download} %{size_download}",
+        target["url"],
+    ]
+    try:
+        p = base.run(cmd, timeout=limit + 2)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "label": target["label"], "url": target["url"], "mbps": None, "error": "HTTP download timed out"}
+    try:
+        speed_bps, size_bytes = [float(x) for x in p.stdout.strip().split()[-2:]]
+    except Exception:
+        return {"ok": False, "label": target["label"], "url": target["url"], "mbps": None, "error": (p.stderr or p.stdout).strip()[-300:] or "No HTTP speed result"}
+    if size_bytes < 1_000_000 or speed_bps <= 0:
+        return {"ok": False, "label": target["label"], "url": target["url"], "mbps": None, "bytes": int(size_bytes), "error": (p.stderr or "Too little data downloaded").strip()[-300:]}
+    return {
+        "ok": True,
+        "label": target["label"],
+        "url": target["url"],
+        "mbps": round(speed_bps * 8.0 / 1_000_000.0, 2),
+        "bytes": int(size_bytes),
+        "curl_exit": p.returncode,
+    }
+
+
+def _best_http_download(results):
+    values = [float(row["mbps"]) for row in results if row.get("ok") and row.get("mbps") is not None]
+    return round(max(values), 2) if values else None
+
+
+def _reverse_download_trustworthy(download_mbps, upload_mbps):
+    if download_mbps is None or upload_mbps is None:
+        return True
+    down = float(download_mbps)
+    up = float(upload_mbps)
+    if up < PEER_REVERSE_MIN_UPLOAD_MBPS:
+        return True
+    return not (down < PEER_REVERSE_UNTRUSTED_MBPS and down < up * PEER_REVERSE_MAX_RATIO)
 
 
 def raw_throughput_suite(progress_start=31, progress_end=66):
@@ -121,8 +205,21 @@ def raw_throughput_suite(progress_start=31, progress_end=66):
         vals = [float(item[path]["mbps"]) for item in targets.values() if item.get(path, {}).get("mbps") is not None]
         return round(max(vals), 2) if vals else None
 
+    iperf_download = best("multi_down")
+    http_fallback = []
+    download_source = "iperf3_reverse"
+    download_mbps = iperf_download
+    if iperf_download is None or iperf_download < SMART_HTTP_FALLBACK_MBPS:
+        base.progress("raw_http_fallback", "Raw Speed · HTTPS-Gegenprobe für verdächtig langsamen iPerf-Download", progress_end - 1)
+        for target in HTTP_DOWNLOAD_TARGETS:
+            http_fallback.append(_http_download_once(target))
+        http_download = _best_http_download(http_fallback)
+        if http_download is not None and (download_mbps is None or http_download > download_mbps):
+            download_mbps = http_download
+            download_source = "https_fallback"
+
     return {
-        "download_mbps": best("multi_down"),
+        "download_mbps": download_mbps,
         "upload_mbps": best("multi_up"),
         "single_download_mbps": best("single_down"),
         "targets": targets,
@@ -130,7 +227,10 @@ def raw_throughput_suite(progress_start=31, progress_end=66):
         "selected_target": winner["key"],
         "selected_targets": selected_keys,
         "precheck": precheck,
-        "aggregation": "download validated across two prequalified networks; upload/single-stream measured on the winning network",
+        "http_download_fallback": http_fallback,
+        "download_source": download_source,
+        "iperf_download_mbps": iperf_download,
+        "aggregation": "download validated across two prequalified iPerf networks with HTTPS fallback for suspicious reverse-mode results; upload/single-stream measured on the winning iPerf network",
     }
 
 
@@ -198,12 +298,66 @@ def iperf_region_direction(region, reverse=False):
     return failed
 
 
+def peer_region_probe(region):
+    primary = region["primary"]
+    secondary = region.get("secondary")
+    ping_inputs = [(primary["host"], base.PEER_PING_COUNT)]
+    if secondary:
+        ping_inputs.append((secondary["host"], max(3, base.PEER_PING_COUNT - 1)))
+    ping_results = base.parallel_pings(ping_inputs)
+    networks = [{"label": primary["label"], "host": primary["host"], "role": "primary", "ping": ping_results[0]}]
+    if secondary:
+        networks.append({"label": secondary["label"], "host": secondary["host"], "role": "secondary", "ping": ping_results[1]})
+    down = iperf_region_direction(region, reverse=True)
+    up = iperf_region_direction(region, reverse=False)
+    aggregate = robust_aggregate_ping(ping_results)
+    trustworthy = _reverse_download_trustworthy(down.get("mbps"), up.get("mbps"))
+    return {
+        "code": region["code"],
+        "label": region["label"],
+        "city": region["city"],
+        "primary": primary["label"],
+        "download_mbps": down.get("mbps"),
+        "upload_mbps": up.get("mbps"),
+        "download": down,
+        "upload": up,
+        "download_target": down.get("target_label"),
+        "upload_target": up.get("target_label"),
+        "download_trustworthy": trustworthy,
+        "download_note": None if trustworthy else "Reverse-mode public iPerf result is inconsistent with healthy upload and is excluded from peer scoring.",
+        "ping_ms": aggregate.get("avg_ms"),
+        "jitter_ms": aggregate.get("jitter_ms"),
+        "loss_pct": aggregate.get("loss_pct"),
+        "networks": networks,
+    }
+
+
+def peer_connectivity_suite(progress_start=67, progress_end=91):
+    regions = {}
+    span = (progress_end - progress_start) / max(len(base.PEER_REGIONS), 1)
+    for idx, region in enumerate(base.PEER_REGIONS):
+        pct = progress_start + idx * span
+        base.progress(f"peer_{region['code'].lower()}", f"EU Peer · {region['code']} {region['city']} wird geprüft", pct, {"region": region["code"]})
+        result = peer_region_probe(region)
+        regions[region["code"]] = result
+        base.progress(f"peer_{region['code'].lower()}_done", f"EU Peer · {region['code']} abgeschlossen", pct + span * 0.9, {"region": region["code"], "download_mbps": result.get("download_mbps"), "upload_mbps": result.get("upload_mbps"), "download_trustworthy": result.get("download_trustworthy"), "ping_ms": result.get("ping_ms"), "loss_pct": result.get("loss_pct")})
+    return {
+        "regions": regions,
+        "target_order": [r["code"] for r in base.PEER_REGIONS],
+        "method": "short multi-network iPerf3 + ICMP probes; suspicious reverse-mode public iPerf download values are retained for diagnostics but excluded from scoring when contradicted by healthy upload",
+        "benchmark_mode": base.BENCHMARK_MODE,
+    }
+
+
 def main():
     if SMART:
         base.IPERF_CONNECT_TIMEOUT_MS = min(base.IPERF_CONNECT_TIMEOUT_MS, 1200)
     base.RAW_TARGETS = RAW_TARGETS
     base.ping_stats = reliable_ping_stats
     base.aggregate_ping = robust_aggregate_ping
+    base.dns_test = reliable_dns_test
     base.raw_throughput_suite = raw_throughput_suite
+    base.peer_region_probe = peer_region_probe
+    base.peer_connectivity_suite = peer_connectivity_suite
     base.iperf_region_direction = iperf_region_direction
     base.main()
