@@ -21,22 +21,35 @@
     }
 
     wrap.innerHTML = `
+      <a class="version-github" href="${data?.repository || 'https://github.com/mlo-Tek/VPN-Exit-Bench'}" target="_blank" rel="noopener noreferrer" aria-label="VPN Exit Bench auf GitHub öffnen" title="GitHub Repository">${githubIcon()}</a>
       <div class="version-build" title="Installierter Docker-Build">Version <strong>${installed}</strong></div>
       <div class="version-state ${stateClass}" title="${title}"><span class="version-dot"></span>${stateText}</div>
-      <a class="version-github" href="${data?.repository || 'https://github.com/mlo-Tek/VPN-Exit-Bench'}" target="_blank" rel="noopener noreferrer" aria-label="VPN Exit Bench auf GitHub öffnen" title="GitHub Repository">${githubIcon()}</a>
     `;
     return wrap;
   }
 
-  async function loadVersionStatus() {
+  function prepareBrandArea() {
     const top = document.querySelector('.top');
-    if (!top || document.querySelector('.version-status')) return;
+    if (!top) return null;
+    const brand = top.firstElementChild;
+    if (!brand) return null;
+
+    brand.classList.add('brand');
+    [...brand.children].forEach((child) => {
+      if (child.matches('.muted')) child.remove();
+    });
+    return brand;
+  }
+
+  async function loadVersionStatus() {
+    const brand = prepareBrandArea();
+    if (!brand || document.querySelector('.version-status')) return;
     try {
       const response = await fetch('/api/version', { cache: 'no-store' });
       const data = await response.json();
-      top.appendChild(makeStatus(data));
+      brand.appendChild(makeStatus(data));
     } catch (_) {
-      top.appendChild(makeStatus({ installed: { label: 'unbekannt' }, update_available: null }));
+      brand.appendChild(makeStatus({ installed: { label: 'unbekannt' }, update_available: null }));
     }
   }
 
