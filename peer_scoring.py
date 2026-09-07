@@ -1,3 +1,5 @@
+SCORING_MODEL_VERSION = 5
+
 REGION_WEIGHTS = {
     "NL": 25,
     "DE": 25,
@@ -85,7 +87,8 @@ def _peer_rating(score):
 
 
 def _region_score(region, reference):
-    down = _ratio_score(region.get("download_mbps"), reference.get("down_mbps"))
+    download_trustworthy = region.get("download_trustworthy", True) is not False
+    down = _ratio_score(region.get("download_mbps"), reference.get("down_mbps")) if download_trustworthy else None
     up = _ratio_score(region.get("upload_mbps"), reference.get("up_mbps"))
     latency = _latency_score(region.get("ping_ms"))
     loss = _loss_score(region.get("loss_pct"))
@@ -100,6 +103,7 @@ def _region_score(region, reference):
     result["score_components"] = {
         "upload": up,
         "download": down,
+        "download_trustworthy": download_trustworthy,
         "latency": latency,
         "stability": loss,
         "weights": {"upload": 40, "download": 25, "latency": 20, "stability": 15},
@@ -143,8 +147,6 @@ def score_payload(payload, reference):
     if region_scores and weighted_region_total:
         peer_average = round(weighted_region_sum / weighted_region_total, 1)
         peer_worst = round(min(region_scores), 1)
-        # The weighted average reflects the likely seedbox/peer pool. A weak
-        # single route still matters because torrent swarms are multi-homed.
         peer_score = round(peer_average * 0.85 + peer_worst * 0.15, 1)
 
     peer["regions"] = scored_regions
@@ -191,6 +193,7 @@ def score_payload(payload, reference):
         },
         "reference": reference,
         "weights": {"raw_speed": 40, "eu_peer": 50, "stability": 10},
-        "model": "torrent-eu-peer-v4-no-port",
+        "model": "torrent-eu-peer-v5-reverse-aware-no-port",
+        "model_version": SCORING_MODEL_VERSION,
     }
     return payload
