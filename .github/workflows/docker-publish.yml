@@ -39,6 +39,8 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/mlo-tek/vpn-exit-bench:latest
             ghcr.io/mlo-tek/vpn-exit-bench:${{ github.sha }}
