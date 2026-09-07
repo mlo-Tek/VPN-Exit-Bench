@@ -4,6 +4,10 @@ LABEL org.opencontainers.image.source="https://github.com/mlo-Tek/VPN-Exit-Bench
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.title="VPN Exit Bench"
 
+ARG BUILD_SHA=unknown
+ARG BUILD_DATE=""
+LABEL org.opencontainers.image.revision=$BUILD_SHA
+
 # Pull fixed Alpine packages from the current 3.24 repositories before
 # installing runtime dependencies. This keeps inherited base packages such as
 # util-linux/libuuid patched when fixes land after the pinned base image.
@@ -28,13 +32,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN python -m py_compile app.py server.py worker.py worker_v2.py worker_reliable.py peer_scoring.py config_security.py
+RUN python -m py_compile app.py server.py server_versioned.py version_info.py worker.py worker_v2.py worker_reliable.py peer_scoring.py config_security.py
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_BUILD_SHA=$BUILD_SHA \
+    APP_BUILD_DATE=$BUILD_DATE
 
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8787/api/health || exit 1
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8787", "--workers", "1", "--threads", "8", "--timeout", "120", "server:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8787", "--workers", "1", "--threads", "8", "--timeout", "120", "server_versioned:app"]
