@@ -85,6 +85,8 @@ Measurements include:
 - packet loss
 - DNS lookup timing
 
+Suspicious successful iPerf measurements below **20 Mbps** are automatically rechecked twice. The benchmark then uses the **median of the three successful samples**. This protects the ranking from one-off 1–2 Mbps measurement glitches while still leaving a genuinely slow route slow when all repeated samples remain poor.
+
 ### EU Peer Connectivity
 
 Short iPerf3 and ICMP probes are made toward public datacenter/network endpoints in:
@@ -107,16 +109,17 @@ Current overall weighting:
 
 | Component | Weight |
 |---|---:|
-| EU Peer Connectivity | 45% |
-| Raw Speed | 25% |
-| Incoming Port / Port Forwarding | 20% |
+| EU Peer Connectivity | 50% |
+| Raw Speed | 40% |
 | General Stability / Latency | 10% |
+
+**Port forwarding does not affect the Torrent Score.** Port status remains visible as useful operational information, but an open, mapped, unknown or closed port cannot raise or lower the recommendation score.
 
 The UI keeps these concepts separate:
 
 - **Speed Score** — raw VPN capacity
 - **EU Peer Score** — European datacenter/seedbox connectivity
-- **Torrent Score** — combined qBittorrent-oriented recommendation
+- **Torrent Score** — combined qBittorrent-oriented recommendation based on speed, peering and stability
 
 ---
 

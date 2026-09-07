@@ -64,23 +64,13 @@ def _weighted(parts):
     return round(earned / weight, 1) if weight else None
 
 
-def _port_score(status):
-    if status == "open": return 100.0
-    if status == "mapped_unverified": return 75.0
-    if status == "closed": return 0.0
-    return 45.0
-
-
-def _rating(score, port_status):
+def _rating(score):
     if score is None:
         return "Nicht bewertet"
-    if port_status == "closed":
-        return "Nutzbar – Port geschlossen" if score >= 60 else "Eher ungeeignet"
-    suffix = " – Port prüfen" if port_status == "unknown" else ""
-    if score >= 90: return "Sehr empfehlenswert" + suffix
-    if score >= 78: return "Empfehlenswert" + suffix
-    if score >= 65: return "Gut nutzbar" + suffix
-    if score >= 50: return "Nutzbar" + suffix
+    if score >= 90: return "Sehr empfehlenswert"
+    if score >= 78: return "Empfehlenswert"
+    if score >= 65: return "Gut nutzbar"
+    if score >= 50: return "Nutzbar"
     return "Eher ungeeignet"
 
 
@@ -171,12 +161,13 @@ def score_payload(payload, reference):
         (_loss_score(ping.get("loss_pct")), 60),
         (_latency_score(ping.get("avg_ms")), 40),
     ])
-    port_score = _port_score(port_status)
 
+    # Port forwarding is intentionally informational only. The recommendation
+    # is based on measured throughput, EU peer connectivity and stability so
+    # providers are not rewarded or penalized for dynamic/static/unknown ports.
     total = _weighted([
-        (raw_speed_score, 25),
-        (peer_score, 45),
-        (port_score, 20),
+        (raw_speed_score, 40),
+        (peer_score, 50),
         (stability_score, 10),
     ])
 
@@ -189,18 +180,17 @@ def score_payload(payload, reference):
     }
     payload["torrent_score"] = {
         "score": total,
-        "rating": _rating(total, port_status),
+        "rating": _rating(total),
         "port_status": port_status,
         "components": {
             "raw_speed": raw_speed_score,
             "eu_peer": peer_score,
-            "port": port_score,
             "stability": stability_score,
             "raw_download": raw_down,
             "raw_upload": raw_up,
         },
         "reference": reference,
-        "weights": {"raw_speed": 25, "eu_peer": 45, "port": 20, "stability": 10},
-        "model": "torrent-eu-peer-v3",
+        "weights": {"raw_speed": 40, "eu_peer": 50, "stability": 10},
+        "model": "torrent-eu-peer-v4-no-port",
     }
     return payload

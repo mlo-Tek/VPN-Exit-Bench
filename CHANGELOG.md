@@ -36,6 +36,11 @@ The project is under active development and does not yet promise semantic-versio
 - separated Raw Speed from EU Peer Connectivity
 - peer measurements cover NL, DE, CH, DK, SE, PL and RO
 - weighted EU Peer Score with a worst-route penalty
+- Torrent Score is port-neutral: port-forwarding status remains visible but no longer changes the recommendation score
+- Torrent Score weighting focuses on EU Peer Connectivity (50%), Raw Speed (40%) and Stability/Latency (10%)
+- suspicious successful iPerf measurements below 20 Mbps are automatically rechecked twice and evaluated using the median of three successful samples
+- persistent genuinely slow paths remain slow after the median check; a single transient 1–2 Mbps sample can no longer ruin a ranking by itself
+- benchmark payload version increased to 4 for the robust iPerf measurement behavior
 - interactive Europe peering map grouped by provider/config
 - country-by-country peer matrix
 - benchmark comparison sections sort best-to-worst per metric

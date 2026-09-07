@@ -54,6 +54,8 @@ IPERF_MAX_TRIES = int(os.environ.get("IPERF_MAX_TRIES", str(PROFILE["iperf_max_t
 PEER_MAX_TRIES = int(os.environ.get("PEER_MAX_TRIES", str(PROFILE["peer_max_tries"])))
 IPERF_CONNECT_TIMEOUT_MS = int(os.environ.get("IPERF_CONNECT_TIMEOUT_MS", str(PROFILE["connect_timeout_ms"])))
 RAW_PRECHECK_PING_COUNT = int(os.environ.get("RAW_PRECHECK_PING_COUNT", str(PROFILE["raw_precheck_ping_count"])))
+IPERF_OUTLIER_THRESHOLD_MBPS = float(os.environ.get("IPERF_OUTLIER_THRESHOLD_MBPS", "20"))
+IPERF_OUTLIER_SAMPLES = max(3, int(os.environ.get("IPERF_OUTLIER_SAMPLES", "3")))
 PROGRESS_PREFIX = "__PROGRESS__"
 
 RAW_TARGETS = [
@@ -61,9 +63,6 @@ RAW_TARGETS = [
     {"key": "ams", "label": "Leaseweb Amsterdam", "host": "speedtest.ams1.nl.leaseweb.net", "ports": list(range(5201, 5211))},
 ]
 
-# Peer probes intentionally span different networks/ASNs. Raw speed remains
-# Leaseweb FRA/AMS; these targets are a connectivity proxy for typical EU
-# datacenter/seedbox paths rather than another single-provider speed test.
 PEER_REGIONS = [
     {"code": "NL", "label": "Netherlands", "city": "Amsterdam / Naaldwijk", "primary": {"label": "Worldstream Naaldwijk", "host": "iperf.worldstream.nl", "ports": list(range(5201, 5206))}, "secondary": {"label": "Clouvider Amsterdam", "host": "ams.speedtest.clouvider.net", "ports": list(range(5200, 5210))}},
     {"code": "DE", "label": "Germany", "city": "Frankfurt", "primary": {"label": "Clouvider Frankfurt", "host": "fra.speedtest.clouvider.net", "ports": list(range(5200, 5210))}, "secondary": {"label": "IP-Projects Frankfurt", "host": "speedtest.ip-projects.de", "ports": [5201]}},
@@ -198,11 +197,7 @@ def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=No
     candidates = candidates[:tries]
     errors = []
     for port in candidates:
-        cmd = [
-            "iperf3", "-c", host, "-4", "-p", str(port),
-            "--connect-timeout", str(IPERF_CONNECT_TIMEOUT_MS),
-            "-P", str(parallel), "-t", str(duration), "-J",
-        ]
+        cmd = ["iperf3", "-c", host, "-4", "-p", str(port), "--connect-timeout", str(IPERF_CONNECT_TIMEOUT_MS), "-P", str(parallel), "-t", str(duration), "-J"]
         if reverse:
             cmd.append("-R")
         try:
@@ -233,6 +228,34 @@ def iperf_once(host, ports, reverse=False, parallel=4, duration=15, max_tries=No
     return {"ok": False, "host": host, "parallel": parallel, "seconds": duration, "mbps": None, "error": " | ".join(errors[-3:]) or "No reachable iPerf3 port"}
 
 
+def iperf_stable(host, ports, reverse=False, parallel=4, duration=15, max_tries=None):
+    first = iperf_once(host, ports, reverse=reverse, parallel=parallel, duration=duration, max_tries=max_tries)
+    value = first.get("mbps")
+    if not first.get("ok") or value is None or float(value) >= IPERF_OUTLIER_THRESHOLD_MBPS:
+        return first
+
+    samples = [dict(first)]
+    for _ in range(IPERF_OUTLIER_SAMPLES - 1):
+        retry = iperf_once(host, ports, reverse=reverse, parallel=parallel, duration=duration, max_tries=max_tries)
+        samples.append(dict(retry))
+
+    valid = [float(sample["mbps"]) for sample in samples if sample.get("ok") and sample.get("mbps") is not None]
+    if not valid:
+        first["samples"] = samples
+        first["outlier_rechecked"] = True
+        return first
+
+    median = round(statistics.median(valid), 2)
+    result = dict(first)
+    result["ok"] = True
+    result["mbps"] = median
+    result["median_mbps"] = median
+    result["samples"] = samples
+    result["sample_count"] = len(valid)
+    result["outlier_rechecked"] = True
+    return result
+
+
 def _metric(value, fallback):
     return fallback if value is None else float(value)
 
@@ -242,18 +265,10 @@ def raw_target_precheck():
     rows = []
     for target, probe in zip(RAW_TARGETS, probes):
         rows.append({"key": target["key"], "label": target["label"], "host": target["host"], "ping": probe})
-
     reachable = [row for row in rows if row["ping"].get("avg_ms") is not None]
     if not reachable:
         return RAW_TARGETS[0], rows
-
-    best = min(
-        reachable,
-        key=lambda row: (
-            _metric(row["ping"].get("loss_pct"), 100.0),
-            _metric(row["ping"].get("avg_ms"), 9999.0),
-        ),
-    )
+    best = min(reachable, key=lambda row: (_metric(row["ping"].get("loss_pct"), 100.0), _metric(row["ping"].get("avg_ms"), 9999.0)))
     selected = next(target for target in RAW_TARGETS if target["key"] == best["key"])
     return selected, rows
 
@@ -269,55 +284,35 @@ def raw_throughput_suite(progress_start=31, progress_end=66):
     else:
         run_targets = RAW_TARGETS
         selected_key = None
-
     span = (progress_end - progress_start) / max(len(run_targets), 1)
     for idx, target in enumerate(run_targets):
         base = progress_start + idx * span
         key, host, ports = target["key"], target["host"], target["ports"]
         targets[key] = {"label": target["label"], "host": host}
         progress(f"raw_{key}_single", f"Raw Speed · {target['label']}: Single Download", base + 1)
-        targets[key]["single_down"] = iperf_once(host, ports, reverse=True, parallel=1, duration=IPERF_SINGLE_DURATION)
+        targets[key]["single_down"] = iperf_stable(host, ports, reverse=True, parallel=1, duration=IPERF_SINGLE_DURATION)
         progress(f"raw_{key}_down", f"Raw Speed · {target['label']}: 4× Download", base + span * 0.34)
-        targets[key]["multi_down"] = iperf_once(host, ports, reverse=True, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
+        targets[key]["multi_down"] = iperf_stable(host, ports, reverse=True, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
         progress(f"raw_{key}_up", f"Raw Speed · {target['label']}: 4× Upload", base + span * 0.7)
-        targets[key]["multi_up"] = iperf_once(host, ports, reverse=False, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
-
+        targets[key]["multi_up"] = iperf_stable(host, ports, reverse=False, parallel=IPERF_PARALLEL, duration=IPERF_DURATION)
     def med(path):
         vals = [float(item[path]["mbps"]) for item in targets.values() if item.get(path, {}).get("mbps") is not None]
         return round(statistics.median(vals), 2) if vals else None
-
-    return {
-        "download_mbps": med("multi_down"),
-        "upload_mbps": med("multi_up"),
-        "single_download_mbps": med("single_down"),
-        "targets": targets,
-        "benchmark_mode": BENCHMARK_MODE,
-        "selected_target": selected_key,
-        "precheck": precheck,
-    }
+    return {"download_mbps": med("multi_down"), "upload_mbps": med("multi_up"), "single_download_mbps": med("single_down"), "targets": targets, "benchmark_mode": BENCHMARK_MODE, "selected_target": selected_key, "precheck": precheck}
 
 
 def iperf_region_direction(region, reverse=False):
     endpoints = [region["primary"]]
     if region.get("secondary"):
         endpoints.append(region["secondary"])
-
     attempts = []
     for endpoint in endpoints:
-        result = iperf_once(
-            endpoint["host"],
-            endpoint["ports"],
-            reverse=reverse,
-            parallel=PEER_PARALLEL,
-            duration=PEER_DURATION,
-            max_tries=PEER_MAX_TRIES,
-        )
+        result = iperf_stable(endpoint["host"], endpoint["ports"], reverse=reverse, parallel=PEER_PARALLEL, duration=PEER_DURATION, max_tries=PEER_MAX_TRIES)
         result["target_label"] = endpoint["label"]
         attempts.append(dict(result))
         if result.get("ok"):
             result["attempts"] = attempts
             return result
-
     failed = dict(attempts[-1]) if attempts else {"ok": False, "mbps": None, "error": "No peer endpoint configured"}
     failed["attempts"] = attempts
     return failed
@@ -330,30 +325,13 @@ def peer_region_probe(region):
     if secondary:
         ping_inputs.append((secondary["host"], max(3, PEER_PING_COUNT - 1)))
     ping_results = parallel_pings(ping_inputs)
-
     networks = [{"label": primary["label"], "host": primary["host"], "role": "primary", "ping": ping_results[0]}]
     if secondary:
         networks.append({"label": secondary["label"], "host": secondary["host"], "role": "secondary", "ping": ping_results[1]})
-
     down = iperf_region_direction(region, reverse=True)
     up = iperf_region_direction(region, reverse=False)
     aggregate = aggregate_ping(ping_results)
-    return {
-        "code": region["code"],
-        "label": region["label"],
-        "city": region["city"],
-        "primary": primary["label"],
-        "download_mbps": down.get("mbps"),
-        "upload_mbps": up.get("mbps"),
-        "download": down,
-        "upload": up,
-        "download_target": down.get("target_label"),
-        "upload_target": up.get("target_label"),
-        "ping_ms": aggregate.get("avg_ms"),
-        "jitter_ms": aggregate.get("jitter_ms"),
-        "loss_pct": aggregate.get("loss_pct"),
-        "networks": networks,
-    }
+    return {"code": region["code"], "label": region["label"], "city": region["city"], "primary": primary["label"], "download_mbps": down.get("mbps"), "upload_mbps": up.get("mbps"), "download": down, "upload": up, "download_target": down.get("target_label"), "upload_target": up.get("target_label"), "ping_ms": aggregate.get("avg_ms"), "jitter_ms": aggregate.get("jitter_ms"), "loss_pct": aggregate.get("loss_pct"), "networks": networks}
 
 
 def peer_connectivity_suite(progress_start=67, progress_end=91):
@@ -365,7 +343,7 @@ def peer_connectivity_suite(progress_start=67, progress_end=91):
         result = peer_region_probe(region)
         regions[region["code"]] = result
         progress(f"peer_{region['code'].lower()}_done", f"EU Peer · {region['code']} abgeschlossen", pct + span * 0.9, {"region": region["code"], "download_mbps": result.get("download_mbps"), "upload_mbps": result.get("upload_mbps"), "ping_ms": result.get("ping_ms"), "loss_pct": result.get("loss_pct")})
-    return {"regions": regions, "target_order": [r["code"] for r in PEER_REGIONS], "method": "short multi-network iPerf3 + ICMP probes", "benchmark_mode": BENCHMARK_MODE}
+    return {"regions": regions, "target_order": [r["code"] for r in PEER_REGIONS], "method": "short multi-network iPerf3 + ICMP probes; suspicious sub-threshold iPerf results are rechecked and medianed", "benchmark_mode": BENCHMARK_MODE}
 
 
 def dns_test():
@@ -440,15 +418,7 @@ def port_forwarding_test():
 
 def main():
     kind = vpn_type()
-    out = {
-        "ok": False,
-        "config": CFG.name if kind != "none" else "DIRECT",
-        "type": kind,
-        "provider_hint": PROVIDER,
-        "started_at": int(time.time()),
-        "benchmark_version": 3,
-        "benchmark_mode": BENCHMARK_MODE,
-    }
+    out = {"ok": False, "config": CFG.name if kind != "none" else "DIRECT", "type": kind, "provider_hint": PROVIDER, "started_at": int(time.time()), "benchmark_version": 4, "benchmark_mode": BENCHMARK_MODE}
     cleanup = None
     try:
         progress("starting", f"Worker gestartet · {BENCHMARK_MODE.upper()} Run", 1, {"benchmark_mode": BENCHMARK_MODE})
@@ -464,17 +434,14 @@ def main():
         after = public_info(); out["exit"] = after
         out["ok"] = bool(after.get("ip")) if kind == "none" else bool(after.get("ip") and after.get("ip") != before.get("ip"))
         progress("exit_ip_done", "Exit-IP geprüft", 14, {"ip": after.get("ip"), "city": after.get("city"), "country": after.get("country")})
-
         progress("ping_pair", f"Ping 1.1.1.1 + 8.8.8.8 ({PING_COUNT} Pakete, parallel)", 17)
         ping_cf, ping_google = parallel_pings([("1.1.1.1", PING_COUNT), ("8.8.8.8", PING_COUNT)])
         out["ping"] = aggregate_ping([ping_cf, ping_google])
         progress("dns", "DNS-Auflösung wird getestet", 23); out["dns"] = dns_test()
-
         out["throughput"] = raw_throughput_suite(27, 59 if kind != "none" else 94)
         out["download"] = {"mbps": out["throughput"].get("download_mbps")}
         out["upload"] = {"mbps": out["throughput"].get("upload_mbps")}
         progress("raw_done", "Raw-Speed-Tests abgeschlossen", 60 if kind != "none" else 95, {"download_mbps": out["throughput"].get("download_mbps"), "upload_mbps": out["throughput"].get("upload_mbps"), "benchmark_mode": BENCHMARK_MODE})
-
         if kind != "none":
             out["peer_connectivity"] = peer_connectivity_suite(61, 89)
             progress("port", "Port Forwarding / Erreichbarkeit wird geprüft", 91)
