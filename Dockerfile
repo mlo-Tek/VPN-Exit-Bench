@@ -4,7 +4,11 @@ LABEL org.opencontainers.image.source="https://github.com/mlo-Tek/VPN-Exit-Bench
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.title="VPN Exit Bench"
 
-RUN apk add --no-cache \
+# Pull fixed Alpine packages from the current 3.24 repositories before
+# installing runtime dependencies. This keeps inherited base packages such as
+# util-linux/libuuid patched when fixes land after the pinned base image.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     bash \
     bind-tools \
     ca-certificates \
