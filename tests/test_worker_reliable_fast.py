@@ -1,3 +1,5 @@
+import subprocess
+
 import worker_reliable
 
 
@@ -56,3 +58,29 @@ def test_smart_peer_checks_secondary_when_primary_is_suspicious(monkeypatch):
     assert calls == ["primary", "secondary"]
     assert result["mbps"] == 180.0
     assert result["target_label"] == "secondary"
+
+
+def test_dns_timeout_is_nonfatal(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 5))
+
+    monkeypatch.setattr(worker_reliable.base, "run", timeout)
+    result = worker_reliable.reliable_dns_test()
+
+    assert result["ok"] is False
+    assert "timed out" in result["error"].lower()
+
+
+def test_reverse_download_is_untrusted_when_upload_is_healthy():
+    assert worker_reliable._reverse_download_trustworthy(1.1, 190.0) is False
+    assert worker_reliable._reverse_download_trustworthy(70.0, 190.0) is True
+    assert worker_reliable._reverse_download_trustworthy(1.1, 30.0) is True
+
+
+def test_best_http_download_uses_fastest_valid_result():
+    results = [
+        {"ok": True, "mbps": 120.0},
+        {"ok": False, "mbps": None},
+        {"ok": True, "mbps": 410.5},
+    ]
+    assert worker_reliable._best_http_download(results) == 410.5
