@@ -46,3 +46,51 @@ def test_peer_iperf_falls_back_to_secondary_without_circular_payload(monkeypatch
     assert result["target_label"] == region["secondary"]["label"]
     assert len(result["attempts"]) == 2
     json.dumps(result)
+
+
+def test_suspicious_low_iperf_is_rechecked_and_medianed(monkeypatch):
+    values = iter([1.8, 205.0, 198.0])
+    calls = []
+
+    def fake_iperf(*args, **kwargs):
+        value = next(values)
+        calls.append(value)
+        return {"ok": True, "host": "test", "mbps": value}
+
+    monkeypatch.setattr(worker_v2, "iperf_once", fake_iperf)
+    result = worker_v2.iperf_stable("test", [5201])
+
+    assert calls == [1.8, 205.0, 198.0]
+    assert result["outlier_rechecked"] is True
+    assert result["sample_count"] == 3
+    assert result["mbps"] == 198.0
+    assert result["median_mbps"] == 198.0
+    assert len(result["samples"]) == 3
+
+
+def test_normal_iperf_result_is_not_repeated(monkeypatch):
+    calls = []
+
+    def fake_iperf(*args, **kwargs):
+        calls.append(1)
+        return {"ok": True, "host": "test", "mbps": 150.0}
+
+    monkeypatch.setattr(worker_v2, "iperf_once", fake_iperf)
+    result = worker_v2.iperf_stable("test", [5201])
+
+    assert len(calls) == 1
+    assert result["mbps"] == 150.0
+    assert "outlier_rechecked" not in result
+
+
+def test_persistently_slow_path_remains_slow_after_median(monkeypatch):
+    values = iter([1.1, 1.6, 1.3])
+
+    def fake_iperf(*args, **kwargs):
+        return {"ok": True, "host": "test", "mbps": next(values)}
+
+    monkeypatch.setattr(worker_v2, "iperf_once", fake_iperf)
+    result = worker_v2.iperf_stable("test", [5201])
+
+    assert result["outlier_rechecked"] is True
+    assert result["mbps"] == 1.3
