@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from config_security import validate_config_path
-from worker_v2 import main
+from worker_reliable import main
 
 
 def validate_runtime_config():
