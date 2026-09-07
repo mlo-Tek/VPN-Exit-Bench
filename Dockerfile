@@ -1,4 +1,4 @@
-FROM python:3.12.14-alpine3.24
+FROM python:3.14.7-alpine3.24
 
 LABEL org.opencontainers.image.source="https://github.com/mlo-Tek/VPN-Exit-Bench" \
       org.opencontainers.image.licenses="MIT" \
