@@ -38,6 +38,8 @@ The project is under active development and does not yet promise semantic-versio
 - weighted EU Peer Score with a worst-route penalty
 - Torrent Score is port-neutral: port-forwarding status remains visible but no longer changes the recommendation score
 - Torrent Score weighting focuses on EU Peer Connectivity (50%), Raw Speed (40%) and Stability/Latency (10%)
+- iPerf throughput now uses receiver-confirmed `sum_received` for upload and download; sender-side values remain diagnostic only, preventing short parallel upload tests from reporting buffered rates above the real WAN uplink
+- iPerf results without receiver-confirmed bitrate are rejected instead of falling back to potentially inflated sender-side throughput
 - suspicious successful iPerf measurements below 20 Mbps are automatically rechecked twice and evaluated using the median of three successful samples
 - persistent genuinely slow paths remain slow after the median check; a single transient 1–2 Mbps sample can no longer ruin a ranking by itself
 - benchmark payload version increased to 4 for the robust iPerf measurement behavior
