@@ -16,18 +16,32 @@ def index_with_version_status():
         except Exception:
             return html
 
-    if "version-status.css" not in html:
-        html = html.replace(
-            "</head>",
-            '<link rel="stylesheet" href="/static/version-status.css">\n</head>',
-            1,
-        )
-    if "version-status.js" not in html:
-        html = html.replace(
-            "</body>",
-            '<script src="/static/version-status.js"></script>\n</body>',
-            1,
-        )
+    styles = [
+        "/static/version-status.css",
+        "/static/selection-stability.css",
+    ]
+    scripts = [
+        "/static/version-status.js",
+        "/static/selection-batch.js",
+    ]
+
+    for asset in styles:
+        name = asset.rsplit("/", 1)[-1]
+        if name not in html:
+            html = html.replace(
+                "</head>",
+                f'<link rel="stylesheet" href="{asset}">\n</head>',
+                1,
+            )
+
+    for asset in scripts:
+        name = asset.rsplit("/", 1)[-1]
+        if name not in html:
+            html = html.replace(
+                "</body>",
+                f'<script src="{asset}"></script>\n</body>',
+                1,
+            )
     return html
 
 
