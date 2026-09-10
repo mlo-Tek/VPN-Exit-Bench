@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">VPN Exit Bench</title>
+  <desc id="desc">Shield with network globe and benchmark gauge</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1622"/>
+      <stop offset="1" stop-color="#071018"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3dd9ff"/>
+      <stop offset="1" stop-color="#2368ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="54" fill="url(#bg)"/>
+  <path d="M128 27c27 17 55 29 87 36v53c0 61-32 96-87 116-55-20-87-55-87-116V63c32-7 60-19 87-36Z" fill="#0d2235" stroke="url(#blue)" stroke-width="10" stroke-linejoin="round"/>
+  <circle cx="116" cy="112" r="46" fill="none" stroke="#22598f" stroke-width="7"/>
+  <path d="M72 112h88M116 66c-13 12-20 28-20 46s7 34 20 46M116 66c13 12 20 28 20 46s-7 34-20 46M80 86c11 7 23 10 36 10s25-3 36-10M80 138c11-7 23-10 36-10s25 3 36 10" fill="none" stroke="#39bfff" stroke-width="5" stroke-linecap="round"/>
+  <g transform="translate(127 126)">
+    <path d="M18 62a49 49 0 0 1 94 0" fill="none" stroke="#23364a" stroke-width="17" stroke-linecap="round"/>
+    <path d="M18 62a49 49 0 0 1 70-36" fill="none" stroke="#2e92ff" stroke-width="17" stroke-linecap="round"/>
+    <path d="M88 26a49 49 0 0 1 24 36" fill="none" stroke="#59e66b" stroke-width="17" stroke-linecap="round"/>
+    <circle cx="65" cy="62" r="10" fill="#f1f7ff"/>
+    <path d="M65 62 98 37" stroke="#f1f7ff" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g fill="url(#blue)">
+    <rect x="58" y="149" width="15" height="31" rx="5"/>
+    <rect x="80" y="137" width="15" height="43" rx="5"/>
+    <rect x="102" y="124" width="15" height="56" rx="5"/>
+  </g>
+</svg>
