@@ -5,7 +5,7 @@
     <Registry>https://github.com/mlo-Tek/VPN-Exit-Bench/pkgs/container/vpn-exit-bench</Registry>
     <Network>bridge</Network>
     <WebUI>http://[IP]:[PORT:8787]/</WebUI>
-    <Icon>https://raw.githubusercontent.com/mlo-Tek/VPN-Exit-Bench/main/assets/vpn-exit-bench.svg</Icon>
+    <Icon>https://raw.githubusercontent.com/mlo-Tek/VPN-Exit-Bench/main/assets/vpn-exit-bench.png</Icon>
     <Privileged>false</Privileged>
     <ExtraParams>--security-opt=no-new-privileges:true</ExtraParams>
     <Project>https://github.com/mlo-Tek/VPN-Exit-Bench</Project>
