@@ -16,19 +16,25 @@ It is designed for **Unraid's normal Docker / Community Applications workflow**.
 
 ## Screenshots
 
-The screenshots below show the current WebUI with real benchmark data and cover the normal workflow from baseline/config selection through comparison and regional peering analysis.
+The screenshots below show the current WebUI with real benchmark data and cover the normal workflow from baseline and batch config selection through results, scoring, comparison and regional peering analysis.
 
-### Dashboard, baseline and batch config selection
+| Dashboard, baseline & test mode | Batch config selection |
+|---|---|
+| [![Dashboard, baseline and Smart/Deep mode](docs/screenshots/dashboard.webp)](docs/screenshots/dashboard.webp) | [![Batch config selection](docs/screenshots/config-selection.webp)](docs/screenshots/config-selection.webp) |
 
-![VPN Exit Bench dashboard, baseline and config selection](docs/screenshots/dashboard.webp)
+| Benchmark results | Direct comparison & recommendation |
+|---|---|
+| [![Benchmark results](docs/screenshots/results.webp)](docs/screenshots/results.webp) | [![Direct comparison and recommendation](docs/screenshots/comparison.webp)](docs/screenshots/comparison.webp) |
 
-### Results, recommendation and multi-config comparison
+| Torrent Score ranking | Network quality & peer reachability |
+|---|---|
+| [![Torrent Score ranking](docs/screenshots/torrent-score.webp)](docs/screenshots/torrent-score.webp) | [![Network quality and peer reachability](docs/screenshots/network-quality.webp)](docs/screenshots/network-quality.webp) |
 
-![VPN Exit Bench results and multi-config comparison](docs/screenshots/comparison.webp)
+| Europe peering map & provider matrix | Regional peer measurements |
+|---|---|
+| [![Europe peering map and provider matrix](docs/screenshots/europe-peering-map.webp)](docs/screenshots/europe-peering-map.webp) | [![Regional peer measurements](docs/screenshots/regional-peers.webp)](docs/screenshots/regional-peers.webp) |
 
-### Europe peering map, matrix and regional measurements
-
-![VPN Exit Bench Europe peering map and regional matrix](docs/screenshots/europe-peering-map.webp)
+Click any screenshot to open it directly.
 
 ---
 
