@@ -10,53 +10,64 @@
 
 VPN Exit Bench is an **Unraid-native** tool for comparing WireGuard (`.conf`) and OpenVPN (`.ovpn`) VPN exit points for qBittorrent / torrent usage.
 
-It is designed for **Unraid's normal Docker / Community Applications workflow**. **Docker Compose is not required or used.**
-
-Each VPN config is benchmarked in its own short-lived Docker worker so the Unraid host route itself is not changed.
+It is designed for **Unraid's normal Docker / Community Applications workflow**. Docker Compose is not required. Every selected VPN configuration is tested in a short-lived isolated Docker worker, so the Unraid host route itself is not changed.
 
 ---
 
-## What the project tries to answer
+## Screenshots
 
-VPN Exit Bench separates two different questions:
+> Screenshots of the current WebUI are welcome in `docs/screenshots/`. The README is already prepared to display them automatically at the paths below.
 
-1. **How fast is this VPN exit?**
-   - raw download capacity
-   - raw upload capacity
-   - single-stream performance
-   - latency, jitter and packet loss
+### Benchmark dashboard
 
-2. **How well does this VPN exit reach typical European seedbox / peer regions?**
-   - Netherlands
-   - Germany
-   - Switzerland
-   - Denmark
-   - Sweden
-   - Poland
-   - Romania
+![VPN Exit Bench benchmark dashboard](docs/screenshots/dashboard.png)
 
-The peer test is a **peering/connectivity proxy** using public datacenter endpoints. It does not connect to private tracker peers and cannot know where every real seeder is located.
+### Multi-config comparison
+
+![VPN Exit Bench multi-config comparison](docs/screenshots/comparison.png)
+
+### Europe peering map
+
+![VPN Exit Bench Europe peering map](docs/screenshots/europe-peering-map.png)
+
+---
+
+## What VPN Exit Bench measures
+
+VPN Exit Bench deliberately separates three questions:
+
+1. **Raw VPN capacity** — how much download/upload throughput can this exit deliver?
+2. **European peer connectivity** — how well does this exit reach typical European datacenter/seedbox regions?
+3. **Torrent suitability** — which exit gives the best overall combination of speed, EU peering and stability for qBittorrent-oriented use?
+
+The peer tests use public datacenter endpoints as a connectivity proxy. They do not connect to private tracker peers and cannot predict every real torrent swarm.
 
 ---
 
 ## Main features
 
 - WireGuard and OpenVPN support
-- upload/manage configs directly from the WebUI
-- sequential isolated benchmark workers
-- direct internet baseline
+- upload/manage VPN configs directly from the WebUI
+- isolated short-lived benchmark workers
+- **Smart** and **Deep** benchmark modes
+- Smart mode is the default for fast multi-config comparisons
+- multi-select config checkboxes and sequential batch benchmarking
+- stable selections while working through larger config sets
+- direct internet baseline/reference measurements
 - Raw Speed Score
 - EU Peer Connectivity Score
-- qBittorrent-oriented Torrent Score
+- Torrent Score optimized for torrent/qBittorrent use
+- two peer endpoints per region with regional aggregation/fallback handling
+- reverse/download iPerf trust handling so broken reverse measurements do not unfairly destroy a score
 - Proton NAT-PMP port-forwarding test
 - manual forwarded-port support for providers such as OVPN
+- port forwarding is informational and does **not** influence the Torrent Score
 - live benchmark progress
 - persistent local result history
-- multi-config comparisons
-- automatic best-to-worst sorting per metric
-- interactive Europe peering map per provider/config
+- automatic best-to-worst comparisons
+- interactive Europe peering map
 - country-by-country peer matrix
-- internally scrollable config/result lists after five rows
+- current build/version comparison against GitHub `main`
 - runtime rejection of executable VPN config hooks
 - CSRF protection
 - optional HTTP Basic Authentication
@@ -64,34 +75,61 @@ The peer test is a **peering/connectivity proxy** using public datacenter endpoi
 
 ---
 
-## Benchmark model
+# Benchmark modes
 
-### Raw Speed
+## Smart — recommended default
 
-Raw capacity uses fixed references so every exit is measured against the same paths.
+**Smart** is intended for normal benchmarking and especially for comparing many VPN exits in one batch.
 
-Current references:
+Smart mode:
 
-- Leaseweb Frankfurt
-- Leaseweb Amsterdam
+- prechecks the Frankfurt and Amsterdam raw-speed reference paths;
+- performs the full raw-speed measurement against the better reachable reference;
+- uses shorter iPerf measurement windows;
+- uses fewer ICMP samples;
+- reduces retries where additional retries are unlikely to improve the result;
+- still evaluates all seven EU peer regions;
+- retains port-forwarding checks;
+- can avoid unnecessary work when the useful ranking signal is already clear.
 
-Measurements include:
+Use Smart when testing a provider's full server/config list or when regularly checking which exit is currently best.
 
-- single-stream download
-- multi-stream download
-- multi-stream upload
-- ICMP latency
-- jitter
-- packet loss
-- DNS lookup timing
+## Deep — detailed finalist test
 
-Suspicious successful iPerf measurements below **20 Mbps** are automatically rechecked twice. The benchmark then uses the **median of the three successful samples**. This protects the ranking from one-off 1–2 Mbps measurement glitches while still leaving a genuinely slow route slow when all repeated samples remain poor.
+**Deep** spends more time collecting measurements and is intended for the strongest candidates after a Smart comparison.
 
-### EU Peer Connectivity
+A practical workflow is:
 
-Short iPerf3 and ICMP probes are made toward public datacenter/network endpoints in:
+1. select all interesting configs;
+2. run **Smart**;
+3. compare the resulting Torrent Scores and regional matrix;
+4. select the strongest few exits;
+5. run **Deep** on those finalists.
 
-| Region | Weight in EU Peer Score |
+This gives substantially faster large comparisons without giving up the option of a more exhaustive final measurement.
+
+---
+
+# Scoring model v5
+
+The score intentionally gives European peer connectivity more influence than a simple speed test.
+
+## Raw Speed Score
+
+| Component | Weight |
+|---|---:|
+| Download | 60% |
+| Upload | 40% |
+
+Raw capacity is compared with the direct/reference measurement so different VPN exits are judged against the same local connection baseline.
+
+Suspicious successful iPerf measurements below **20 Mbps** can be rechecked and evaluated using repeated samples/median handling. A single transient low measurement should therefore not ruin an otherwise strong result, while a genuinely slow route remains slow when repeated measurements agree.
+
+## EU Peer Connectivity Score
+
+Regions and weights:
+
+| Region | Weight |
 |---|---:|
 | Netherlands | 25% |
 | Germany | 25% |
@@ -101,11 +139,27 @@ Short iPerf3 and ICMP probes are made toward public datacenter/network endpoints
 | Poland | 5% |
 | Romania | 5% |
 
-Within each region, upload is weighted more heavily than download because upload quality matters strongly for seeding. A weak route is also penalized so one exceptional route cannot completely hide poor connectivity toward the rest of Europe.
+Each regional score is composed of:
 
-### Torrent Score
+| Regional measurement | Weight |
+|---|---:|
+| Upload | 40% |
+| Download | 25% |
+| Latency | 20% |
+| Packet loss / stability | 15% |
 
-Current overall weighting:
+The final EU Peer Score is:
+
+- **85%** weighted regional average
+- **15%** worst measured regional score
+
+The worst-region component prevents one or two excellent routes from completely hiding a badly connected destination.
+
+### Reverse/download trust handling
+
+Public iPerf infrastructure is imperfect. Some endpoints can produce a believable upload result but an obviously broken reverse/download result. When VPN Exit Bench marks a regional download measurement as untrustworthy, that download component is excluded from the regional score instead of treating the bogus value as real VPN performance. The remaining trustworthy upload, latency and loss measurements continue to contribute normally.
+
+## Overall Torrent Score
 
 | Component | Weight |
 |---|---:|
@@ -113,26 +167,42 @@ Current overall weighting:
 | Raw Speed | 40% |
 | General Stability / Latency | 10% |
 
-**Port forwarding does not affect the Torrent Score.** Port status remains visible as useful operational information, but an open, mapped, unknown or closed port cannot raise or lower the recommendation score.
+**Port forwarding has 0% score weight.** Its state remains visible because it matters operationally for torrenting, but open/mapped/closed/unknown port status cannot raise or lower the recommendation score.
 
-The UI keeps these concepts separate:
+The UI therefore keeps three concepts separate:
 
 - **Speed Score** — raw VPN capacity
-- **EU Peer Score** — European datacenter/seedbox connectivity
-- **Torrent Score** — combined qBittorrent-oriented recommendation based on speed, peering and stability
+- **EU Peer Score** — connectivity toward European peer/seedbox proxy regions
+- **Torrent Score** — combined torrent-oriented recommendation
 
 ---
 
-## Europe peering map
+# Batch benchmarking
 
-The comparison view contains a Europe connectivity map for every selected **VPN provider + config**.
+Multiple VPN configs can be selected with checkboxes and benchmarked sequentially. This is useful when a provider offers many exit locations or multiple servers in the same country.
 
-- green / stronger lines = better measured route
-- yellow = medium
-- red = weaker route
-- country nodes show regional connectivity scores
+Selections remain stable while working through the list so configs can be compared as a group instead of starting every benchmark individually. Smart mode is the recommended choice for these larger batches.
 
-Provider tabs keep Proton, OVPN and other providers separate. Config tabs switch individual exits. The matrix next to the map highlights the best config of that provider for each destination region.
+Results can then be compared best-to-worst by the relevant metric rather than relying only on headline download speed.
+
+---
+
+# Europe peering view
+
+The comparison view visualizes regional connectivity for each selected provider/config.
+
+- stronger routes are visually distinguished from weaker routes;
+- country nodes expose the regional scores;
+- provider/config tabs separate exits cleanly;
+- the adjacent matrix makes regional strengths and weaknesses easy to compare.
+
+The map is a visualization of the measured public datacenter routes, not a literal map of torrent peers.
+
+---
+
+# Build/version status
+
+The WebUI exposes build information and can compare the running build SHA with the current GitHub `main` state. This makes it easier to see whether the installed container is running the current project revision after new images are published.
 
 ---
 
@@ -169,29 +239,18 @@ http://UNRAID-IP:8787
 
 ## Authentication
 
-The Unraid template exposes optional:
-
-- `AUTH_USERNAME`
-- `AUTH_PASSWORD`
-
-Set **both** to enable HTTP Basic Authentication. If both are empty, authentication is disabled for backwards compatibility.
-
-When enabled, the browser shows its normal HTTP authentication prompt. Use a strong unique password.
+The Unraid template exposes optional `AUTH_USERNAME` and `AUTH_PASSWORD`. Set **both** to enable HTTP Basic Authentication. If both are empty, authentication is disabled for backwards compatibility.
 
 > [!CAUTION]
-> HTTP Basic Authentication is **authentication, not encryption**. Over plain `http://` the credentials are only Base64-encoded and can be read by anyone able to intercept that connection. Use it only on a trusted LAN, or terminate HTTPS at a trusted local reverse proxy/TLS endpoint. This still does **not** make direct public internet exposure recommended.
+> HTTP Basic Authentication is authentication, not encryption. Over plain HTTP the credentials can be intercepted. Use it only on a trusted LAN or behind a trusted HTTPS reverse proxy/TLS endpoint. Direct public internet exposure is still not recommended.
 
-CSRF protection for state-changing API requests is enabled regardless of whether Basic Authentication is configured.
-
-Authentication reduces accidental/LAN access risk, but **does not make direct public internet exposure recommended**, especially because the application can create Docker containers.
+CSRF protection for state-changing API requests is enabled independently of Basic Authentication.
 
 ---
 
 # Recommended Docker access: Socket Proxy
 
-The main security-sensitive part of VPN Exit Bench is Docker API access. Direct access to `/var/run/docker.sock` is effectively privileged host access if the application were ever compromised.
-
-For new installations, the recommended layout is:
+Direct access to `/var/run/docker.sock` is effectively privileged host access if the application is compromised. New installations should therefore use the restricted Docker Socket Proxy layout:
 
 ```text
 Browser/LAN
@@ -206,70 +265,40 @@ vpn-exit-bench-socket-proxy
 /var/run/docker.sock
 ```
 
-Only the dedicated proxy container receives the real Docker socket. Its TCP port is kept on a private Docker network and is **not published to the LAN**.
-
-### One-time private Docker network
-
-Unraid does not need Docker Compose. Create one private user-defined bridge network once from the Unraid terminal:
+Create the private network once:
 
 ```bash
 docker network create vpn-exit-bench
 ```
 
-### Install the Socket Proxy
-
-Proxy XML template:
+Socket Proxy template:
 
 ```text
 https://raw.githubusercontent.com/mlo-Tek/VPN-Exit-Bench/main/unraid/vpn-exit-bench-socket-proxy.xml
 ```
 
-The template uses `tecnativa/docker-socket-proxy:v0.5.0` and enables only the Docker API area/actions required to inspect, create, start, stop/kill and remove benchmark workers.
-
-The proxy intentionally publishes **no host port**.
-
-### Configure VPN Exit Bench for proxy mode
-
-In the VPN Exit Bench Unraid template:
-
-1. change **Network Type** to the custom `vpn-exit-bench` network;
-2. set:
+Configure VPN Exit Bench to use the custom `vpn-exit-bench` network and set:
 
 ```text
 DOCKER_HOST=tcp://vpn-exit-bench-socket-proxy:2375
 ```
 
-3. remove the main container's `/var/run/docker.sock` mapping;
-4. keep the proxy and VPN Exit Bench on the same private `vpn-exit-bench` network.
-
-The benchmark workers themselves are still created on Docker's normal bridge network so they can reach the internet through their test VPN.
-
-### Legacy/direct mode
-
-Existing installations can continue using:
-
-```text
-/var/run/docker.sock -> /var/run/docker.sock
-```
-
-This remains supported for compatibility but carries a larger host-impact risk than the proxy layout.
+Then remove the main container's `/var/run/docker.sock` mapping. Existing installations can continue using the direct socket mapping for compatibility, but the proxy layout reduces host-impact risk.
 
 ---
 
 ## Worker isolation
 
-Each benchmark runs in a temporary worker container.
+Each benchmark worker:
 
-The worker:
-
-- does **not** receive the Docker socket
-- receives only the selected VPN config as a read-only mount
-- drops the normal Docker capability set
-- receives only `NET_ADMIN`, `NET_RAW` and `NET_BIND_SERVICE`
-- uses `no-new-privileges`
-- has a PID limit
-- receives `/dev/net/tun`
-- is deleted after the benchmark
+- does **not** receive the Docker socket;
+- receives only the selected VPN config as a read-only mount;
+- drops the normal Docker capability set;
+- receives only the networking capabilities required by the benchmark;
+- uses `no-new-privileges`;
+- has a PID limit;
+- receives `/dev/net/tun`;
+- is removed after the benchmark.
 
 This is isolation, not a formal sandbox guarantee.
 
@@ -293,109 +322,36 @@ Example:
 
 The first directory level becomes the provider name in the UI.
 
-Uploaded files are written with restrictive permissions where supported.
-
 > [!CAUTION]
-> WireGuard and OpenVPN configs frequently contain **private keys, certificates or credentials**. Never commit real VPN configs to GitHub and do not share them publicly.
+> WireGuard and OpenVPN configs frequently contain private keys, certificates or credentials. Never commit real VPN configs to GitHub and do not share them publicly.
 
 ---
 
 ## VPN config execution protection
 
-VPN configuration formats can contain directives that execute programs.
-
 VPN Exit Bench rejects unnecessary executable/control hooks such as WireGuard `PreUp`, `PostUp`, `PreDown`, `PostDown` and OpenVPN script/plugin/management directives.
 
-Validation happens in two places:
-
-1. when a config is uploaded through the WebUI;
-2. **again inside the worker immediately before the config is executed**.
-
-The second check is important because it also protects configs copied manually into the appdata directory.
+Validation occurs when a config is uploaded and again inside the worker immediately before execution. The worker-side validation also protects configs copied manually into appdata.
 
 ---
 
 # Security and privacy
 
-## Public IP handling
+The worker temporarily determines the direct public IP to verify that the VPN changed the egress route. Current versions do not persist or return the pre-VPN public IP and scrub it from older local result payloads at startup. VPN exit IPs remain in local results because they identify the exits being compared.
 
-The worker temporarily determines the direct public IP to verify that the VPN changed the egress route.
+External benchmark services naturally see the source IP used for each request. During a direct baseline this can be the normal internet address; during VPN measurements it should normally be the VPN exit.
 
-Current versions:
+The WebUI includes CSRF protection, browser security headers, Content Security Policy protections and no-store API responses. The project also rejects executable VPN config hooks and keeps common key/config formats out of normal Git/Docker build contexts.
 
-- do not persist the pre-VPN public IP
-- do not return it through job results
-- scrub it from older local result payloads at startup
-- do not persist a direct baseline public IP
-
-VPN **exit IPs** remain in local benchmark results because they identify the exits being compared.
-
-See [PRIVACY.md](PRIVACY.md) for the full data-flow description.
-
-## External benchmark services
-
-Tests intentionally contact external services, including public-IP lookup services, Cloudflare/Google ICMP targets, Leaseweb speed-test endpoints, European public iPerf3/datacenter targets and an external port checker.
-
-These services naturally see the source IP used for the request. During a direct baseline that source is the user's normal internet address; during VPN measurements it should normally be the VPN exit.
-
-## Browser security
-
-The WebUI uses:
-
-- CSRF protection for mutating requests
-- `X-Content-Type-Options: nosniff`
-- frame blocking
-- no-referrer policy
-- restricted browser permissions
-- Content Security Policy with nonce-protected script execution
-- no-store API responses
-
-Dynamic UI styling still requires inline **style attributes**; script execution does not rely on `unsafe-inline`.
-
-## Secret/build hygiene
-
-`.gitignore` and `.dockerignore` cover common sensitive material, including:
-
-- `*.conf`
-- `*.ovpn`
-- `*.key`
-- `*.pem`
-- `*.p12` / `*.pfx`
-- `.env*`
-- `results.db`
-- local `vpns/` and `config/` directories
-
-The published Docker build therefore does not intentionally include local VPN configs or appdata.
+See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
 # Automated security checks
 
-The public repository includes:
-
-- **CodeQL** Python analysis
-- **pip-audit** dependency vulnerability checks
-- **Bandit** high-severity Python static checks
-- **Trivy** repository vulnerability/secret/misconfiguration scanning
-- **Trivy** built-container vulnerability/secret scanning
-- **Dependency Review** on pull requests
-- **Dependabot** for Python, Docker and GitHub Actions
-- GitHub Actions pinned to full commit SHAs
-- GHCR image SBOM/provenance metadata
+The repository includes CodeQL, pip-audit, Bandit, Trivy scanning, Dependency Review, Dependabot, pinned GitHub Actions and GHCR image SBOM/provenance metadata.
 
 Security automation reduces risk but does not replace code review or an independent audit.
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
----
-
-## Security review status
-
-A source-level review of the public `main` tree was performed during the 2026-09-02 hardening work.
-
-At that time no real WireGuard/OpenVPN configs, WireGuard private-key fields, PEM private-key blocks or user-specific Unraid/VLAN addresses were found in the current repository tree.
-
-This statement applies to the reviewed current tree and is **not a forensic guarantee about every historical commit**. If a real credential is ever committed, deleting it later is not sufficient: it must be revoked/rotated.
 
 ---
 
@@ -415,22 +371,18 @@ Persistent data lives under `/config`, normally backed by:
 /mnt/cache/appdata/vpn-exit-bench
 ```
 
-This includes uploaded VPN configs and `results.db`. Recreating the Docker container does not remove these files as long as the appdata mapping remains intact.
+This includes uploaded VPN configs and `results.db`. Recreating the Docker container does not remove these files while the appdata mapping remains intact.
 
 ---
 
-# Contributing and project policy
+# Project files
 
-- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security reports: [SECURITY.md](SECURITY.md)
-- Privacy: [PRIVACY.md](PRIVACY.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
-- License: [MIT](LICENSE)
+- [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
+- [PRIVACY.md](PRIVACY.md)
+- [MIT License](LICENSE)
 
 The project is under active development. Benchmark endpoints and scoring can change as more real-world measurements are collected.
 
-## License
-
-VPN Exit Bench is released under the **MIT License**. See [LICENSE](LICENSE).
-
-GitHub: https://github.com/mlo-Tek/VPN-Exit-Bench
+VPN Exit Bench is released under the **MIT License**.
