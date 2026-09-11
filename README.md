@@ -16,19 +16,19 @@ It is designed for **Unraid's normal Docker / Community Applications workflow**.
 
 ## Screenshots
 
-> Screenshots of the current WebUI are welcome in `docs/screenshots/`. The README is already prepared to display them automatically at the paths below.
+The screenshots below show the current WebUI with real benchmark data and cover the normal workflow from baseline/config selection through comparison and regional peering analysis.
 
-### Benchmark dashboard
+### Dashboard, baseline and batch config selection
 
-![VPN Exit Bench benchmark dashboard](docs/screenshots/dashboard.png)
+![VPN Exit Bench dashboard, baseline and config selection](docs/screenshots/dashboard.webp)
 
-### Multi-config comparison
+### Results, recommendation and multi-config comparison
 
-![VPN Exit Bench multi-config comparison](docs/screenshots/comparison.png)
+![VPN Exit Bench results and multi-config comparison](docs/screenshots/comparison.webp)
 
-### Europe peering map
+### Europe peering map, matrix and regional measurements
 
-![VPN Exit Bench Europe peering map](docs/screenshots/europe-peering-map.png)
+![VPN Exit Bench Europe peering map and regional matrix](docs/screenshots/europe-peering-map.webp)
 
 ---
 
