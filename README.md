@@ -16,25 +16,31 @@ It is designed for **Unraid's normal Docker / Community Applications workflow**.
 
 ## Screenshots
 
-The screenshots below show the current WebUI with real benchmark data and cover the normal workflow from baseline and batch config selection through results, scoring, comparison and regional peering analysis.
+The screenshots below show the current WebUI with real benchmark data and cover the normal workflow from baseline and batch config selection through results, scoring, comparison and regional peering analysis. Each image is shown full-width for readability and can be opened directly.
 
-| Dashboard, baseline & test mode | Batch config selection |
-|---|---|
-| [![Dashboard, baseline and Smart/Deep mode](docs/screenshots/dashboard.webp)](docs/screenshots/dashboard.webp) | [![Batch config selection](docs/screenshots/config-selection.webp)](docs/screenshots/config-selection.webp) |
+### Regional measurement cards
 
-| Benchmark results | Direct comparison & recommendation |
-|---|---|
-| [![Benchmark results](docs/screenshots/results.webp)](docs/screenshots/results.webp) | [![Direct comparison and recommendation](docs/screenshots/comparison.webp)](docs/screenshots/comparison.webp) |
+[![VPN Exit Bench regional measurement cards with download, upload, ping and loss values](docs/screenshots/dashboard.jpg)](docs/screenshots/dashboard.jpg)
 
-| Torrent Score ranking | Network quality & peer reachability |
-|---|---|
-| [![Torrent Score ranking](docs/screenshots/torrent-score.webp)](docs/screenshots/torrent-score.webp) | [![Network quality and peer reachability](docs/screenshots/network-quality.webp)](docs/screenshots/network-quality.webp) |
+### Network quality and peer reachability
 
-| Europe peering map & provider matrix | Regional peer measurements |
-|---|---|
-| [![Europe peering map and provider matrix](docs/screenshots/europe-peering-map.webp)](docs/screenshots/europe-peering-map.webp) | [![Regional peer measurements](docs/screenshots/regional-peers.webp)](docs/screenshots/regional-peers.webp) |
+[![VPN Exit Bench network quality cards with ping, jitter, packet loss and externally confirmed port reachability](docs/screenshots/config-selection.jpg)](docs/screenshots/config-selection.jpg)
 
-Click any screenshot to open it directly.
+### Download and upload results
+
+[![VPN Exit Bench download and upload benchmark result rankings with baseline markers](docs/screenshots/results.jpg)](docs/screenshots/results.jpg)
+
+### Europe matrix and provider comparison
+
+[![VPN Exit Bench Europe peering matrix comparing VPN configs across EU regions](docs/screenshots/comparison.jpg)](docs/screenshots/comparison.jpg)
+
+### Torrent Score ranking
+
+[![VPN Exit Bench Torrent Score ranking for qBittorrent-oriented VPN exits](docs/screenshots/torrent-score.jpg)](docs/screenshots/torrent-score.jpg)
+
+### Europe peering map
+
+[![VPN Exit Bench Europe peering map with provider matrix and regional scores](docs/screenshots/europe-peering-map.jpg)](docs/screenshots/europe-peering-map.jpg)
 
 ---
 
