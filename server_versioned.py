@@ -1,9 +1,12 @@
 from flask import g
 
+import app as app_module
+from result_history import register_result_history
 from server import app
 from version_info import register_version_route
 
 register_version_route(app)
+register_result_history(app, app_module.db)
 
 _original_index = app.view_functions["index"]
 
