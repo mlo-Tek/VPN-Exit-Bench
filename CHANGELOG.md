@@ -56,6 +56,10 @@ The project is under active development and does not yet promise semantic-versio
 - added benchmark **Pause / Resume / Cancel** controls to the live progress panel
 - pausing lets the current config finish cleanly, then stops before the next config so iPerf measurements are not corrupted
 - cancelling stops the current worker immediately, discards the partial current-config result and keeps already completed results
+- benchmark runs are now additive: new manual or batch tests no longer hide results from configs that were not retested
+- the results view shows the newest run per provider/config while retaining older runs in SQLite as history
+- `/api/results?history=1` exposes the complete stored benchmark history, while the default results endpoint remains focused on the latest run per config
+- current result entries include `history_count` so repeated measurements can be identified without deleting prior runs
 
 ## 2026-09-01
 
