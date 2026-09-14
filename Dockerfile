@@ -32,7 +32,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN python -m py_compile app.py server.py server_versioned.py version_info.py worker.py worker_v2.py worker_reliable.py peer_scoring.py config_security.py
+RUN python -m py_compile app.py server.py server_versioned.py version_info.py worker.py worker_v2.py worker_reliable.py peer_scoring.py config_security.py result_history.py
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
