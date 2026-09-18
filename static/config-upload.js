@@ -44,6 +44,19 @@
     script.dataset.vpnbenchCompareSort='1';
     document.body.appendChild(script);
   }
+  if(!document.querySelector('link[data-vpnbench-network-profile]')){
+    const link=document.createElement('link');
+    link.rel='stylesheet';
+    link.href='/static/network-profile.css';
+    link.dataset.vpnbenchNetworkProfile='1';
+    document.head.appendChild(link);
+  }
+  if(!document.querySelector('script[data-vpnbench-network-profile]')){
+    const script=document.createElement('script');
+    script.src='/static/network-profile.js';
+    script.dataset.vpnbenchNetworkProfile='1';
+    document.body.appendChild(script);
+  }
   if(!document.querySelector('link[data-vpnbench-peer-map]')){
     const link=document.createElement('link');
     link.rel='stylesheet';
