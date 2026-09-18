@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from config_security import validate_config_path
+from network_profile import enrich_public_info
 import worker_v2 as worker_base
 from worker_reliable import main
 
@@ -124,6 +125,24 @@ def _receiver_iperf_once(host, ports, reverse=False, parallel=4, duration=15, ma
 # Replacing the function here therefore fixes raw-speed, EU-peer and DIRECT
 # baseline measurements without duplicating the surrounding benchmark logic.
 worker_base.iperf_once = _receiver_iperf_once
+
+
+# Enrich only the post-connect public-IP lookup. The first lookup is the user's
+# direct egress and is intentionally kept minimal/non-persistent.
+_base_public_info = worker_base.public_info
+_public_info_calls = 0
+
+
+def _network_public_info():
+    global _public_info_calls
+    info = _base_public_info()
+    _public_info_calls += 1
+    if worker_base.vpn_type() == "none" or _public_info_calls == 1:
+        return info
+    return enrich_public_info(info, worker_base.run)
+
+
+worker_base.public_info = _network_public_info
 
 
 def validate_runtime_config():
