@@ -60,6 +60,10 @@ The project is under active development and does not yet promise semantic-versio
 - the results view shows the newest run per provider/config while retaining older runs in SQLite as history
 - `/api/results?history=1` exposes the complete stored benchmark history, while the default results endpoint remains focused on the latest run per config
 - current result entries include `history_count` so repeated measurements can be identified without deleting prior runs
+- exit metadata now includes ASN, network organization, canonical ISP/hoster, BGP prefix and reverse DNS without affecting the benchmark score
+- the ISP/hoster catalog includes the CryptoStorm networks observed in real configs (M247, UNITED COLO, NForce Entertainment, AltusHost and Private Layer) plus common VPN/datacenter networks such as DataCamp/CDN77, DataPacket, Leaseweb, Worldstream, Clouvider, Serverius, NovoServe, Hetzner, OVHcloud, Vultr, DigitalOcean, Gcore, Hivelocity and others
+- the results view now shows a compact exit-network profile per run and an aggregated ASN/ISP overview, e.g. `AS9009 · M247 · 2 Exits`
+- ISP/ASN metadata is informational only; Torrent Score weighting and port-neutral scoring remain unchanged
 
 ## 2026-09-01
 
