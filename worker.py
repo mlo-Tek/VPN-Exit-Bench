@@ -7,6 +7,7 @@ from pathlib import Path
 
 from config_security import validate_config_path
 from network_profile import enrich_public_info
+from port_forwarding import normalize_manual_forward_result
 import worker_v2 as worker_base
 from worker_reliable import main
 
@@ -143,6 +144,21 @@ def _network_public_info():
 
 
 worker_base.public_info = _network_public_info
+
+
+# The generic checker can only probe the worker's current public exit IP. Some
+# VPN providers publish a different ingress IP for manually configured port
+# forwards. In that situation a negative probe must not be presented as proof
+# that the provider-side forwarding rule is closed.
+_base_generic_forwarded_port_check = worker_base.generic_forwarded_port_check
+
+
+def _manual_forwarded_port_check():
+    result = _base_generic_forwarded_port_check()
+    return normalize_manual_forward_result(result, worker_base.FORWARDED_PORT)
+
+
+worker_base.generic_forwarded_port_check = _manual_forwarded_port_check
 
 
 def validate_runtime_config():
