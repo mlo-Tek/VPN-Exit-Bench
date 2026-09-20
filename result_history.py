@@ -2,6 +2,8 @@ import json
 
 from flask import jsonify, request
 
+from provider_identity import canonical_provider
+
 
 def _decode_row(row):
     row_id, ts, provider, name, typ, raw_payload = row
@@ -9,6 +11,18 @@ def _decode_row(row):
         payload = json.loads(raw_payload)
     except Exception:
         payload = {"ok": False, "error": "Gespeichertes Ergebnis ist ungültig."}
+
+    provider = canonical_provider(provider, name=name)
+
+    # Older score models stored failed runs as a numeric 0. A failed benchmark
+    # is not a measured zero-score result, so expose it as missing to the UI.
+    if payload.get("ok") is False:
+        torrent_score = dict(payload.get("torrent_score") or {})
+        torrent_score["score"] = None
+        torrent_score.setdefault("rating", "Fehlgeschlagen")
+        torrent_score.setdefault("components", {})
+        payload["torrent_score"] = torrent_score
+
     payload.update(
         {
             "id": row_id,
