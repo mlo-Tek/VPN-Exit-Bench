@@ -64,6 +64,9 @@ The project is under active development and does not yet promise semantic-versio
 - the ISP/hoster catalog includes the CryptoStorm networks observed in real configs (M247, UNITED COLO, NForce Entertainment, AltusHost and Private Layer) plus common VPN/datacenter networks such as DataCamp/CDN77, DataPacket, Leaseweb, Worldstream, Clouvider, Serverius, NovoServe, Hetzner, OVHcloud, Vultr, DigitalOcean, Gcore, Hivelocity and others
 - the results view now shows a compact exit-network profile per run and an aggregated ASN/ISP overview, e.g. `AS9009 · M247 · 2 Exits`
 - ISP/ASN metadata is informational only; Torrent Score weighting and port-neutral scoring remain unchanged
+- CryptoStorm configs using the short `cs-*.conf` naming convention are now recognized as **CryptoStorm** even when they physically remain in the legacy `Other/` directory
+- manual qBit ports are shared as a provider default across otherwise empty configs of the same VPN provider, while explicit per-config overrides remain intact
+- a successfully completed benchmark with a manually supplied qBit port can no longer fall back to `Unbekannt`: the server preserves the requested port and reports it at least as configured/unverified when external reachability cannot be proven
 - manually supplied forwarded ports are no longer reported as definitely `closed` solely because a probe against the current VPN exit IP fails
 - manual port-forward checks now distinguish `open` from `mapped_unverified`; a negative exit-IP probe is retained as diagnostic metadata because some VPN providers expose forwarding through a different ingress IP than the public exit IP
 - the worker records whether the current exit-IP probe completed and whether it accepted TCP while keeping provider-side forwarding status explicitly unverified unless external reachability is positively confirmed
