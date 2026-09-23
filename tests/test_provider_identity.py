@@ -4,11 +4,15 @@ from provider_identity import canonical_provider, infer_provider
 def test_cryptostorm_is_inferred_from_root_config_name():
     assert canonical_provider("Other", name="cryptostorm-dusseldorf.conf") == "CryptoStorm"
     assert canonical_provider("Other", name="crypto-storm-netherlands.conf") == "CryptoStorm"
+    assert canonical_provider("Other", name="cs-dusseldorf.conf") == "CryptoStorm"
+    assert canonical_provider("Other", name="cs-finland.conf") == "CryptoStorm"
+    assert canonical_provider("Other", name="cs-czech.conf") == "CryptoStorm"
 
 
 def test_cryptostorm_folder_is_canonicalized():
     assert canonical_provider("cryptostorm", name="dusseldorf.conf") == "CryptoStorm"
     assert canonical_provider("Other", name="dusseldorf.conf", rel="CryptoStorm/dusseldorf.conf") == "CryptoStorm"
+    assert canonical_provider("Other", name="cs-netherlands.conf", rel="Other/cs-netherlands.conf") == "CryptoStorm"
 
 
 def test_existing_known_providers_keep_their_canonical_names():
