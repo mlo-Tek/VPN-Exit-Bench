@@ -4,7 +4,9 @@ from pathlib import Path
 _GENERIC_PROVIDERS = {"", "other", "vpn", "unknown", "unbekannt"}
 
 _PROVIDER_RULES = (
-    (re.compile(r"(^|[-_. ])cryptostorm(?:$|[-_. ])|crypto[-_. ]*storm", re.I), "CryptoStorm"),
+    # CryptoStorm's own configs in this setup use both long names such as
+    # cryptostorm-dusseldorf.conf and the short cs-dusseldorf.conf form.
+    (re.compile(r"(^|[-_. ])cryptostorm(?:$|[-_. ])|crypto[-_. ]*storm|^cs(?:$|[-_. ])", re.I), "CryptoStorm"),
     (re.compile(r"(^|[-_. ])proton(?:$|[-_. ])", re.I), "Proton"),
     (re.compile(r"(^|[-_. ])ovpn(?:$|[-_. ])", re.I), "OVPN"),
     (re.compile(r"(^|[-_. ])mullvad(?:$|[-_. ])", re.I), "Mullvad"),
